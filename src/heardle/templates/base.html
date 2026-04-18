@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Heardle{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="https://sdk.scdn.co/spotify-player.js" defer></script>
+</head>
+<body>
+    <header>
+        <a href="/" class="logo">Heardle</a>
+        <nav>
+            {% if user %}
+                <span class="user">{{ user.display_name }}</span>
+                <a href="/auth/logout">Log out</a>
+            {% else %}
+                <a href="/auth/login">Log in with Spotify</a>
+            {% endif %}
+        </nav>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

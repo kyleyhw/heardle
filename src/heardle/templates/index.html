@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="intro">
+    <h1>Pick a source</h1>
+    <p>Choose any Spotify artist, year, or playlist. A random track from the resulting pool becomes the daily target.</p>
+</section>
+
+{% if not has_credentials %}
+<section class="notice">
+    <h2>Server not yet configured</h2>
+    <p>
+        <code>SPOTIFY_CLIENT_ID</code> is missing from <code>.env</code>.
+        See the <a href="https://github.com/kyleyhw/heardle#setup">README</a>
+        for the one-off Spotify Developer app registration.
+    </p>
+</section>
+{% elif not user %}
+<section class="notice">
+    <p>
+        <a href="/auth/login">Log in with Spotify</a> (Premium required) to
+        start a game.
+    </p>
+</section>
+{% else %}
+<form method="post" action="/game/new" class="source-form">
+    <fieldset>
+        <legend>Source type</legend>
+        <label><input type="radio" name="source_type" value="artist" checked> Artist</label>
+        <label><input type="radio" name="source_type" value="playlist"> Playlist</label>
+        <label><input type="radio" name="source_type" value="year"> Release year</label>
+    </fieldset>
+    <label for="source_id">
+        Spotify ID / year
+        <input id="source_id" name="source_id" type="text" required
+               placeholder="e.g. 6eUKZXaKkcviH0Ku9w2n3V  (artist id)  or  2023  (year)">
+    </label>
+    <button type="submit">Start game</button>
+    <p class="hint">
+        Artist and playlist IDs are the last path segment of the Spotify URL.
+        <br>
+        <code>open.spotify.com/artist/<strong>6eUKZXaKkcviH0Ku9w2n3V</strong></code>.
+    </p>
+</form>
+{% endif %}
+{% endblock %}

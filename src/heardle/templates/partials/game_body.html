@@ -1,0 +1,92 @@
+{#
+    The swappable interior of the game page. htmx replaces this element via
+    out-of-band swap after every POST to /game/{id}/guess or /game/{id}/skip.
+
+    Context variables (set by api.py):
+      - game_id: string
+      - state: GameState
+      - clip_length_seconds: int (0 when the game is over)
+      - target: Track | None (non-null only when the game is finished)
+      - score: int | None (non-null only when the game is finished)
+      - guess_lookup: dict[spotify_id -> {title, artist}]
+#}
+
+<div id="game-body"
+     data-clip-length="{{ clip_length_seconds }}"
+     data-round-index="{{ state.round_index }}"
+     data-finished="{{ state.finished|lower }}">
+
+    <ol class="rounds">
+    {% for i in range(6) %}
+        {% set guess = state.guesses[i] if i < state.guesses|length else None %}
+        {% set is_active = (i == state.round_index) and not state.finished %}
+        <li class="round {% if is_active %}active{% endif %}">
+            <span class="round-number">{{ i + 1 }}</span>
+            {% if i < state.guesses|length %}
+                {% if guess is none %}
+                    <span class="skipped">— skipped —</span>
+                {% elif guess == state.target_spotify_id %}
+                    <span class="correct">
+                        ✓ {{ guess_lookup[guess].title }} — {{ guess_lookup[guess].artist }}
+                    </span>
+                {% else %}
+                    <span class="wrong">
+                        ✗ {{ guess_lookup[guess].title if guess in guess_lookup else guess }}
+                        {% if guess in guess_lookup %}— {{ guess_lookup[guess].artist }}{% endif %}
+                    </span>
+                {% endif %}
+            {% else %}
+                <span class="pending">—</span>
+            {% endif %}
+        </li>
+    {% endfor %}
+    </ol>
+
+    {% if state.finished %}
+        <div class="result">
+            {% if state.won %}
+                <h2>You got it — score {{ score }} / 6</h2>
+            {% else %}
+                <h2>Out of guesses</h2>
+            {% endif %}
+            {% if target %}
+                <p>The track was
+                    <strong>{{ target.title }}</strong>
+                    by <strong>{{ target.primary_artist }}</strong>
+                    ({{ target.release_year }}).
+                </p>
+            {% endif %}
+            <a href="/" class="play-again">Play again</a>
+        </div>
+    {% else %}
+        <div class="controls">
+            <button id="play-button" type="button">
+                Play {{ clip_length_seconds }} s
+            </button>
+
+            <form class="guess-form"
+                  hx-post="/game/{{ game_id }}/guess"
+                  hx-target="#game-body"
+                  hx-swap="outerHTML">
+                <div class="autocomplete-wrapper">
+                    <input id="guess-input"
+                           name="guess_typed"
+                           type="text"
+                           autocomplete="off"
+                           placeholder="Type a track name..."
+                           data-game-id="{{ game_id }}">
+                    <ul id="autocomplete-list" class="autocomplete-list" hidden></ul>
+                </div>
+                <input id="guess-spotify-id" name="guess_spotify_id" type="hidden">
+                <button type="submit" id="submit-guess" disabled>Submit</button>
+            </form>
+
+            <form class="skip-form"
+                  hx-post="/game/{{ game_id }}/skip"
+                  hx-target="#game-body"
+                  hx-swap="outerHTML">
+                <button type="submit" class="skip-button">Skip</button>
+            </form>
+        </div>
+    {% endif %}
+</div>

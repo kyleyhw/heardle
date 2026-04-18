@@ -27,10 +27,12 @@ This document outlines the planned phases and tasks for developing the Heardle c
 16. [completed] `scripts/plot_corpus_distribution.py` — matplotlib histogram for empirical threshold tuning (year and, when present, popularity). Rationale documented in `docs/corpus_threshold.md`.
 17. [completed] Implemented `corpus.py` — pandas-backed `Corpus`, `load_corpus(path, popularity_threshold, year_threshold)`, `autocomplete` via rapidfuzz `WRatio`, `union_with(extra_tracks)` for $\mathcal{G} = \mathcal{P} \cup \mathcal{C}$, `normalize` handling diacritics / apostrophes / parenthesised suffixes. 22 unit tests against a synthetic DataFrame.
 
-## Phase 5: Frontend
-18. [pending] Jinja templates: `base.html`, `index.html`, `game.html`, partials for guess rounds.
-19. [pending] `static/player.js` — Web Playback SDK init, device transfer, playback start at offset 0, clip cutoff via `player_state_changed` events.
-20. [pending] `static/styles.css` — minimal layout close to original Heardle's visual grammar (stacked guess rows, progress bar).
+## Phase 5: Frontend + full API routes
+18. [completed] Jinja templates: `base.html`, `index.html`, `game.html`, `partials/game_body.html` (htmx-swappable).
+19. [completed] `static/player.js` — SDK init with `getOAuthToken` → `/api/token`, device transfer, clip cutoff anchored to `player_state_changed` events for ±20 ms precision.
+20. [completed] `static/autocomplete.js` — debounced typeahead (300 ms) hitting `/autocomplete?q=X&game_id=Y`, re-initialises on every htmx swap.
+21. [completed] `static/styles.css` — dark Heardle-esque layout with stacked round rows and Spotify-green accent.
+22. [completed] `api.py` expanded to full routing: `/`, `/auth/login`, `/callback`, `/auth/logout`, `/api/token`, `/game/new`, `/game/{id}`, `/game/{id}/guess|skip|play`, `/autocomplete`. Target track URI held server-side only (cheat-prevention). 14 unit tests via `TestClient` with dependency overrides.
 
 ## Phase 6: End-to-end verification
 21. [pending] Run full `pytest` suite.
