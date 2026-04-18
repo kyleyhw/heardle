@@ -35,6 +35,6 @@ This document outlines the planned phases and tasks for developing the Heardle c
 22. [completed] `api.py` expanded to full routing: `/`, `/auth/login`, `/callback`, `/auth/logout`, `/api/token`, `/game/new`, `/game/{id}`, `/game/{id}/guess|skip|play`, `/autocomplete`. Target track URI held server-side only (cheat-prevention). 14 unit tests via `TestClient` with dependency overrides.
 
 ## Phase 6: End-to-end verification
-21. [pending] Run full `pytest` suite.
-22. [pending] Manual play-through with a Premium account; verify clip timings via browser console deltas.
-23. [pending] Write test report in `tests/reports/YYYY-MM-DD-initial-verification.md` per user global testing standards.
+21. [completed] SETUP.md walkthrough (Spotify app, Kaggle download, corpus loader) and docs/deployment.md (optional Fly.io/Railway/Render hosting).
+22. [completed] Part A: automated checks pass (94 unit tests, 3 skipped integration, ruff + ty + detect-secrets green, server boots with only a placeholder `.env`). Report at `tests/reports/2026-04-19-phase6-initial-verification.md`.
+23. [pending] Part B: credential-gated integration tests + corpus load + manual play-through + clip-timing verification. Requires user-side Spotify Developer app registration and Kaggle download. Follow-up dated report under `tests/reports/` when complete.
