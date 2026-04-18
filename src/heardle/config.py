@@ -37,7 +37,8 @@ class Settings:
     session_secret: str
     game_state_secret: str
     popular_corpus_path: str
-    popularity_threshold: int
+    popularity_threshold: int | None
+    year_threshold: int | None
 
 
 def load_settings() -> Settings:
@@ -49,9 +50,12 @@ def load_settings() -> Settings:
         If any required variable is missing. Required: ``SPOTIFY_CLIENT_ID``,
         ``SPOTIFY_CLIENT_SECRET``, ``SPOTIFY_REDIRECT_URI``, ``SESSION_SECRET``,
         ``GAME_STATE_SECRET``. Optional with defaults: ``POPULAR_CORPUS_PATH``
-        (``data/popular_corpus.parquet``), ``POPULARITY_THRESHOLD`` (``25``).
+        (``data/popular_corpus.parquet``), ``POPULARITY_THRESHOLD`` (``25``),
+        ``YEAR_THRESHOLD`` (``2000``). Either threshold may be set to the
+        empty string to disable that filter.
     ValueError
-        If ``POPULARITY_THRESHOLD`` is set but not an integer.
+        If ``POPULARITY_THRESHOLD`` or ``YEAR_THRESHOLD`` is set but not an
+        integer.
     """
     return Settings(
         spotify_client_id=os.environ["SPOTIFY_CLIENT_ID"],
@@ -60,5 +64,14 @@ def load_settings() -> Settings:
         session_secret=os.environ["SESSION_SECRET"],
         game_state_secret=os.environ["GAME_STATE_SECRET"],
         popular_corpus_path=os.environ.get("POPULAR_CORPUS_PATH", "data/popular_corpus.parquet"),
-        popularity_threshold=int(os.environ.get("POPULARITY_THRESHOLD", "25")),
+        popularity_threshold=_int_or_none(os.environ.get("POPULARITY_THRESHOLD", "25")),
+        year_threshold=_int_or_none(os.environ.get("YEAR_THRESHOLD", "2000")),
     )
+
+
+def _int_or_none(raw: str) -> int | None:
+    """Parse an env-var int, treating the empty string as "filter disabled"."""
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    return int(stripped)

@@ -22,10 +22,10 @@ This document outlines the planned phases and tasks for developing the Heardle c
 13. [completed] Unit tests (27): every $i \in \{0, \dots, 5\}$ clip length, every winning round, exhaustion via all-wrong and all-skip, mixed skip/guess path, immutability assertion, convexity check on $d_i$, out-of-range bounds on `clip_length_for`, mid-game `score()` raises, finished-state guards on both transition functions.
 
 ## Phase 4: Popular-songs corpus
-14. [pending] Select a Spotify songs snapshot dataset (Kaggle / HuggingFace); document provenance.
-15. [pending] Write a one-off loader script that produces `data/popular_corpus.parquet`.
-16. [pending] Plot the popularity distribution, choose threshold $\tau$ empirically, document in `docs/corpus_threshold.md`.
-17. [pending] Implement `corpus.py` — load at startup, build rapidfuzz autocomplete index, expose `union(C)` helper.
+14. [completed] Selected `rodolfofigueroa/spotify-1.2m-songs` (Kaggle) — user explicitly chose the larger dataset. Loader auto-detects and also supports `maharshipandya/spotify-tracks-dataset` as a fallback.
+15. [completed] `scripts/load_corpus.py` — schema-auto-detecting CSV → canonical parquet converter with `--input` / `--output` CLI args.
+16. [completed] `scripts/plot_corpus_distribution.py` — matplotlib histogram for empirical threshold tuning (year and, when present, popularity). Rationale documented in `docs/corpus_threshold.md`.
+17. [completed] Implemented `corpus.py` — pandas-backed `Corpus`, `load_corpus(path, popularity_threshold, year_threshold)`, `autocomplete` via rapidfuzz `WRatio`, `union_with(extra_tracks)` for $\mathcal{G} = \mathcal{P} \cup \mathcal{C}$, `normalize` handling diacritics / apostrophes / parenthesised suffixes. 22 unit tests against a synthetic DataFrame.
 
 ## Phase 5: Frontend
 18. [pending] Jinja templates: `base.html`, `index.html`, `game.html`, partials for guess rounds.
