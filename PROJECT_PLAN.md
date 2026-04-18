@@ -18,8 +18,8 @@ This document outlines the planned phases and tasks for developing the Heardle c
 11. [completed] Unit tests (31, respx-mocked) + integration tests (3, gated on credentials) against Spotify's "Today's Top Hits", Ed Sheeran top-tracks, year=2020 search.
 
 ## Phase 3: Pure game logic
-12. [pending] Implement `game.py` — `d_i` schedule, round progression, scoring, title/artist normalisation, rapidfuzz-based matching.
-13. [pending] Unit tests: every $i \in \{0, \dots, 5\}$ transition, scoring correctness, exhaustion, boundary inputs on matching.
+12. [completed] Implement `game.py` — frozen `GameState`, `clip_length_for(i)`, `apply_guess`, `skip_round`, `score`. Immutable transitions via `dataclasses.replace`. Fuzzy matching deferred to `corpus.py` (Phase 4) since it belongs with autocomplete, not game logic.
+13. [completed] Unit tests (27): every $i \in \{0, \dots, 5\}$ clip length, every winning round, exhaustion via all-wrong and all-skip, mixed skip/guess path, immutability assertion, convexity check on $d_i$, out-of-range bounds on `clip_length_for`, mid-game `score()` raises, finished-state guards on both transition functions.
 
 ## Phase 4: Popular-songs corpus
 14. [pending] Select a Spotify songs snapshot dataset (Kaggle / HuggingFace); document provenance.
