@@ -1,0 +1,73 @@
+[project]
+name = "heardle"
+version = "0.1.0"
+description = "Self-hosted Heardle clone accepting arbitrary Spotify artist, year, or playlist as the correct-answer pool; plays expanding intro snippets via the Web Playback SDK."
+readme = "README.md"
+authors = [
+    { name = "Kyle", email = "kyleyhw@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.136.0",
+    "httpx>=0.28.1",
+    "itsdangerous>=2.2.0",
+    "jinja2>=3.1.6",
+    "pandas>=3.0.2",
+    "pyarrow>=23.0.1",
+    "pydantic>=2.13.2",
+    "python-dotenv>=1.2.2",
+    "rapidfuzz>=3.14.5",
+    "uvicorn[standard]>=0.44.0",
+]
+
+[project.scripts]
+heardle = "heardle:main"
+
+[build-system]
+requires = ["uv_build>=0.9.16,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "detect-secrets>=1.5.0",
+    "matplotlib>=3.10.8",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "respx>=0.23.1",
+    "ruff>=0.15.11",
+    "ty>=0.0.31",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+]
+# RUF001/002/003 forbid "ambiguous" Unicode characters (e.g. mathematical script letters).
+# The codebase deliberately uses set-theoretic notation (𝒢, 𝒫, 𝒞, ∪) in docstrings to
+# mirror the mathematical specification — these rules produce only false positives here.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["heardle"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
