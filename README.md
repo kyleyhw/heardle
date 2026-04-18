@@ -38,10 +38,12 @@ heardle/
 
 | File | Contents |
 |---|---|
+| [SETUP.md](SETUP.md) | End-to-end setup walkthrough (Spotify app, Kaggle corpus, running the server) |
 | [docs/architecture.md](docs/architecture.md) | System-level architecture, request flow, module responsibilities |
 | [docs/oauth_flow.md](docs/oauth_flow.md) | Spotify Authorization Code flow details, scopes, Premium verification, token refresh |
 | [docs/audio_pipeline.md](docs/audio_pipeline.md) | Web Playback SDK integration, clip-cutoff precision, known latency sources |
-| [docs/corpus_threshold.md](docs/corpus_threshold.md) | Derivation and empirical justification of the popularity threshold τ |
+| [docs/corpus_threshold.md](docs/corpus_threshold.md) | Derivation and empirical justification of the popular-corpus filter |
+| [docs/deployment.md](docs/deployment.md) | Optional public-hosted mode (Fly.io / Railway / Render) |
 
 ## Mathematical overview
 
@@ -77,12 +79,9 @@ The rationale for the specific value of $\tau$ is derived from the snapshot's po
 
 ## Setup
 
-1. Install [uv](https://docs.astral.sh/uv/).
-2. `uv sync` — install runtime and dev dependencies from `uv.lock`.
-3. `cp .env.example .env` and fill in Spotify credentials from the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard). Register the redirect URI exactly as in `.env`.
-4. `uv run pre-commit install` — activate the lint + secrets-scan + type-check hooks.
-5. Download the popular-songs snapshot per [docs/corpus_threshold.md](docs/corpus_threshold.md), place at `data/popular_corpus.parquet`.
-6. `uv run uvicorn heardle.api:app --reload` — launch the server at http://127.0.0.1:8000.
+See **[SETUP.md](SETUP.md)** for the full walkthrough (Spotify Developer app, Kaggle corpus download, running the loader, starting the server). Expect ~10 minutes of active work plus the Kaggle download in the background.
+
+For deploying the hosted-URL experience so friends can play without cloning, see [docs/deployment.md](docs/deployment.md).
 
 ## Running tests
 
