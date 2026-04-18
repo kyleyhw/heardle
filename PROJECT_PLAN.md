@@ -7,15 +7,15 @@ This document outlines the planned phases and tasks for developing the Heardle c
 2. [completed] Add runtime dependencies (`fastapi`, `uvicorn`, `httpx`, `pydantic`, `python-dotenv`, `jinja2`, `rapidfuzz`, `pandas`, `pyarrow`, `itsdangerous`).
 3. [completed] Add dev dependencies (`ruff`, `ty`, `detect-secrets`, `pytest`, `pytest-asyncio`, `respx`, `pre-commit`, `matplotlib`).
 4. [completed] Write `.gitignore`, `.env.example`, `.pre-commit-config.yaml`, generate `.secrets.baseline`.
-5. [in-progress] Write README, PROJECT_PLAN, and `/docs/` skeleton.
-6. [pending] Create `src/heardle/*` module stubs and `tests/` structure.
-7. [pending] `git add`, initial commit (no Claude/Anthropic attribution).
+5. [completed] Write README, PROJECT_PLAN, and `/docs/` skeleton.
+6. [completed] Create `src/heardle/*` module stubs and `tests/` structure.
+7. [completed] `git add`, initial commit (no Claude/Anthropic attribution).
 
 ## Phase 2: Spotify OAuth + metadata
-8. [pending] Implement `config.py` (pydantic-settings over `.env`).
-9. [pending] Implement `auth.py` — Authorization Code flow, callback handler, refresh on 401, Premium check via `/v1/me`.
-10. [pending] Implement `spotify.py` — async wrapper: fetch playlist tracks, artist top-tracks, year-search tracks, single-track metadata.
-11. [pending] Integration test against a known public playlist (e.g. Spotify's "Today's Top Hits").
+8. [completed] Implement `config.py` with `python-dotenv` loading and a frozen `Settings` dataclass.
+9. [completed] Implement `auth.py` — Authorization Code + Client Credentials + refresh flows, `itsdangerous`-signed state (10 min lifetime), `assert_premium` with explicit `PremiumRequiredError`.
+10. [completed] Implement `spotify.py` — async wrapper: playlist (paginated), artist top-tracks, year-search (paginated), single-track metadata; robust `_try_parse_track` that skips malformed / non-track entries.
+11. [completed] Unit tests (31, respx-mocked) + integration tests (3, gated on credentials) against Spotify's "Today's Top Hits", Ed Sheeran top-tracks, year=2020 search.
 
 ## Phase 3: Pure game logic
 12. [pending] Implement `game.py` — `d_i` schedule, round progression, scoring, title/artist normalisation, rapidfuzz-based matching.
