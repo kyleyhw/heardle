@@ -41,7 +41,13 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from heardle import itunes as itunes_mod
 from heardle.config import Settings, load_settings
-from heardle.game import GameState, apply_guess, clip_length_for, initial_state
+from heardle.game import (
+    CLIP_LENGTHS_SECONDS,
+    GameState,
+    apply_guess,
+    clip_length_for,
+    initial_state,
+)
 from heardle.game import score as game_score
 from heardle.game import skip_round as game_skip
 from heardle.spotify import Track
@@ -172,7 +178,15 @@ async def index(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> HTMLResponse:
-    """Render the source-selector form."""
+    """Render the source-selector form.
+
+    Visiting home explicitly forgets the current session's game_id. Each
+    ``POST /game/new`` already creates a fresh ``GameSession`` with a new
+    random game_id, so the without-replacement remaining_pool is always
+    clean-slate on the next game — this just prevents the browser's back
+    button from silently resuming an old in-flight session.
+    """
+    request.session.pop(_SESSION_GAME_ID, None)
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -507,11 +521,20 @@ def _game_context(game_id: str, session: GameSession) -> dict[str, object]:
     total_score = sum(r.score for r in session.history)
     max_score = songs_played * 6  # 6 points max per song
 
+    # The Skip button shows the extra seconds the player would unlock by
+    # skipping. At the final round there is no further reveal, so it stays
+    # ``None`` and the template falls back to a bare "Skip" label.
+    next_skip_increment: int | None = None
+    i = state.round_index
+    if not state.finished and i + 1 < len(CLIP_LENGTHS_SECONDS):
+        next_skip_increment = CLIP_LENGTHS_SECONDS[i + 1] - CLIP_LENGTHS_SECONDS[i]
+
     return {
         "game_id": game_id,
         "state": state,
         "clip_length_seconds": clip_length_for(state.round_index) if not state.finished else 0,
-        "max_clip_seconds": 16,  # the full preview window our d_i progression tops out at
+        "max_clip_seconds": CLIP_LENGTHS_SECONDS[-1],
+        "next_skip_increment": next_skip_increment,
         "target": session.target if state.finished else None,
         "score": game_score(state) if state.finished else None,
         "guess_lookup": guess_lookup,

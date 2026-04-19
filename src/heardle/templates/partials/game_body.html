@@ -4,24 +4,20 @@
 
     Three top-level states:
     - Session finished (scoreboard view)
-    - Current song in progress
     - Current song finished, session still active (transition screen)
+    - Current song in progress (main Heardle gameplay screen)
 #}
 
 <div id="game-body"
+     class="game-screen"
      data-game-id="{{ game_id }}"
      data-clip-length="{{ clip_length_seconds }}"
      data-round-index="{{ state.round_index }}"
      data-finished="{{ state.finished|lower }}"
      data-session-finished="{{ session_finished|lower }}">
 
-    {# Audio element shared across songs. ``autocomplete.js`` / ``player.js``
-       reset the src whenever a new song starts, so one element suffices. #}
     <audio id="heardle-audio" preload="auto"></audio>
 
-    {# Session header — always shown above whichever of the three states
-       is active. ``source_type`` / ``source_value`` mirror what the user
-       typed into the index form so they don't have to remember it. #}
     <header class="session-header">
         {% if session_finished %}
             <span class="session-progress">Session complete</span>
@@ -35,11 +31,13 @@
 
     {% if session_finished %}
         {# ----------------------------------------------------------------
-           SCOREBOARD VIEW — session ended
+           SCOREBOARD VIEW
            ---------------------------------------------------------------- #}
         <section class="scoreboard">
             <h2>Final score: {{ total_score }} / {{ max_score }}</h2>
-            <p>{{ history|length }} song{{ 's' if history|length != 1 else '' }} played.</p>
+            <p class="scoreboard-subtitle">
+                {{ history|length }} song{{ 's' if history|length != 1 else '' }} played
+            </p>
             {% if history %}
                 <ol class="scoreboard-list">
                     {% for result in history %}
@@ -47,8 +45,10 @@
                             <span class="scoreboard-status">
                                 {% if result.won %}✓{% else %}✗{% endif %}
                             </span>
-                            <span class="scoreboard-title">{{ result.target.title }}</span>
-                            <span class="scoreboard-artist">{{ result.target.primary_artist }}</span>
+                            <span class="scoreboard-track">
+                                <span class="scoreboard-title">{{ result.target.title }}</span>
+                                <span class="scoreboard-artist">{{ result.target.primary_artist }}</span>
+                            </span>
                             <span class="scoreboard-score">{{ result.score }} / 6</span>
                         </li>
                     {% endfor %}
@@ -58,24 +58,24 @@
         </section>
 
     {% else %}
-        {# ----------------------------------------------------------------
-           IN-SESSION VIEW — current song in progress or just finished
-           ---------------------------------------------------------------- #}
 
-        {# Collapsible history of previously-played songs in this session. #}
         {% if history %}
             <details class="history-panel">
                 <summary>
                     Previous {{ history|length }}
                     song{{ 's' if history|length != 1 else '' }}
-                    — {{ total_score }} pts total
+                    · {{ total_score }} pts
                 </summary>
                 <ol>
                     {% for result in history %}
                         <li class="history-row {% if result.won %}won{% else %}lost{% endif %}">
-                            {% if result.won %}✓{% else %}✗{% endif %}
-                            {{ result.target.title }} — {{ result.target.primary_artist }}
-                            ({{ result.score }} pts)
+                            <span class="history-mark">
+                                {% if result.won %}✓{% else %}✗{% endif %}
+                            </span>
+                            <span class="history-text">
+                                {{ result.target.title }} — {{ result.target.primary_artist }}
+                            </span>
+                            <span class="history-score">{{ result.score }}</span>
                         </li>
                     {% endfor %}
                 </ol>
@@ -86,111 +86,146 @@
         {% for i in range(6) %}
             {% set guess = state.guesses[i] if i < state.guesses|length else None %}
             {% set is_active = (i == state.round_index) and not state.finished %}
-            <li class="round {% if is_active %}active{% endif %}">
-                <span class="round-number">{{ i + 1 }}</span>
+            {% if guess is none and i < state.guesses|length %}
+                {% set row_class = "skipped-row" %}
+            {% elif guess is not none and guess == state.target_spotify_id %}
+                {% set row_class = "correct-row" %}
+            {% elif guess is not none %}
+                {% set row_class = "wrong-row" %}
+            {% elif is_active %}
+                {% set row_class = "active-row" %}
+            {% else %}
+                {% set row_class = "empty-row" %}
+            {% endif %}
+            <li class="round {{ row_class }}">
                 {% if i < state.guesses|length %}
                     {% if guess is none %}
-                        <span class="skipped">— skipped —</span>
+                        <span class="round-label">Skipped</span>
                     {% elif guess == state.target_spotify_id %}
-                        <span class="correct">
-                            ✓ {{ guess_lookup[guess].title }} — {{ guess_lookup[guess].artist }}
+                        <span class="round-label">
+                            ✓ {{ guess_lookup[guess].title }}
+                            <span class="round-artist">{{ guess_lookup[guess].artist }}</span>
                         </span>
                     {% else %}
-                        <span class="wrong">
+                        <span class="round-label">
                             ✗ {{ guess_lookup[guess].title if guess in guess_lookup else guess }}
                             {% if guess in guess_lookup %}
-                                — {{ guess_lookup[guess].artist }}
+                                <span class="round-artist">{{ guess_lookup[guess].artist }}</span>
                             {% endif %}
                         </span>
                     {% endif %}
-                {% else %}
-                    <span class="pending">—</span>
                 {% endif %}
             </li>
         {% endfor %}
         </ol>
 
+        {# Progress bar: fill shows the fraction of the max (16 s) that has
+           been revealed so far. Tick marks sit at the d_i values so the
+           player sees the schedule ahead of them. #}
+        {% set max_seconds = max_clip_seconds or 16 %}
+        <div class="clip-progress" aria-hidden="true">
+            <div class="clip-fill"
+                 style="width: {{ (clip_length_seconds / max_seconds * 100)|round(2) }}%;"></div>
+            {% for d in [1, 2, 4, 7, 11] %}
+                <div class="clip-tick"
+                     style="left: {{ (d / max_seconds * 100)|round(2) }}%;"></div>
+            {% endfor %}
+        </div>
+        <div class="clip-times">
+            <span>0:{{ '%02d'|format(clip_length_seconds) }}</span>
+            <span>0:{{ '%02d'|format(max_seconds) }}</span>
+        </div>
+
         {% if state.finished %}
             {# -----------------------------------------------------------
-               SONG TRANSITION — song finished, session continues
+               TRANSITION STATE — current song ended, session continues
                ----------------------------------------------------------- #}
             <div class="result">
                 {% if state.won %}
-                    <h3>Got it — {{ score }} / 6</h3>
+                    <h3 class="result-title won">Got it — {{ score }} / 6</h3>
                 {% else %}
-                    <h3>Out of guesses</h3>
+                    <h3 class="result-title lost">Out of guesses</h3>
                 {% endif %}
                 {% if target %}
-                    <p>The track was
+                    <p class="result-track">
                         <strong>{{ target.title }}</strong>
-                        by <strong>{{ target.primary_artist }}</strong>
-                        ({{ target.release_year }}).
+                        <span class="result-artist">{{ target.primary_artist }} · {{ target.release_year }}</span>
                     </p>
                 {% endif %}
                 <div class="transition-buttons">
-                    <form hx-post="/game/{{ game_id }}/next"
-                          hx-target="#game-body"
-                          hx-swap="outerHTML"
-                          class="inline-form">
-                        <button type="submit" class="primary">
-                            {% if remaining_count > 0 %}
-                                Next song ({{ remaining_count }} left)
-                            {% else %}
-                                Finish session
-                            {% endif %}
-                        </button>
-                    </form>
-                    <form hx-post="/game/{{ game_id }}/end"
-                          hx-target="#game-body"
-                          hx-swap="outerHTML"
-                          class="inline-form">
-                        <button type="submit" class="secondary">
-                            End session
-                        </button>
-                    </form>
+                    <button type="button"
+                            class="primary"
+                            hx-post="/game/{{ game_id }}/next"
+                            hx-target="#game-body"
+                            hx-swap="outerHTML">
+                        {% if remaining_count > 0 %}
+                            Next song ({{ remaining_count }} left)
+                        {% else %}
+                            Finish session
+                        {% endif %}
+                    </button>
+                    <button type="button"
+                            class="secondary"
+                            hx-post="/game/{{ game_id }}/end"
+                            hx-target="#game-body"
+                            hx-swap="outerHTML">
+                        End session
+                    </button>
                 </div>
             </div>
 
         {% else %}
             {# -----------------------------------------------------------
-               IN-PROGRESS SONG — show Play, guess input, Skip, End session
+               IN-PROGRESS SONG — classic Heardle gameplay layout
                ----------------------------------------------------------- #}
-            <div class="controls">
-                <button id="play-button" type="button">
-                    Play {{ clip_length_seconds }} s
+            <div class="play-area">
+                <button id="play-button" type="button" class="play-button-big"
+                        aria-label="Play clip">
+                    <span class="play-triangle">▶</span>
                 </button>
+            </div>
 
-                <form class="guess-form"
-                      hx-post="/game/{{ game_id }}/guess"
-                      hx-target="#game-body"
-                      hx-swap="outerHTML">
-                    <div class="autocomplete-wrapper">
-                        <input id="guess-input"
-                               name="guess_typed"
-                               type="text"
-                               autocomplete="off"
-                               placeholder="Type a track name..."
-                               data-game-id="{{ game_id }}">
-                        <ul id="autocomplete-list" class="autocomplete-list" hidden></ul>
-                    </div>
-                    <input id="guess-track-id" name="guess_track_id" type="hidden">
-                    <button type="submit" id="submit-guess" disabled>Submit</button>
-                </form>
-
-                <div class="secondary-controls">
-                    <form class="skip-form"
-                          hx-post="/game/{{ game_id }}/skip"
-                          hx-target="#game-body"
-                          hx-swap="outerHTML">
-                        <button type="submit" class="skip-button">Skip</button>
-                    </form>
-                    <form class="end-form"
-                          hx-post="/game/{{ game_id }}/end"
-                          hx-target="#game-body"
-                          hx-swap="outerHTML">
-                        <button type="submit" class="end-session-button">End session</button>
-                    </form>
+            <form id="guess-form"
+                  class="guess-form"
+                  hx-post="/game/{{ game_id }}/guess"
+                  hx-target="#game-body"
+                  hx-swap="outerHTML">
+                <div class="autocomplete-wrapper">
+                    <input id="guess-input"
+                           name="guess_typed"
+                           type="text"
+                           autocomplete="off"
+                           placeholder="Type a song or artist..."
+                           data-game-id="{{ game_id }}">
+                    <ul id="autocomplete-list" class="autocomplete-list" hidden></ul>
                 </div>
+                <input id="guess-track-id" name="guess_track_id" type="hidden">
+                <div class="action-bar">
+                    <button type="button"
+                            class="skip-button"
+                            hx-post="/game/{{ game_id }}/skip"
+                            hx-target="#game-body"
+                            hx-swap="outerHTML">
+                        {% if next_skip_increment %}
+                            Skip (+{{ next_skip_increment }} s)
+                        {% else %}
+                            Skip
+                        {% endif %}
+                    </button>
+                    <button type="submit" id="submit-guess" class="submit-button" disabled>
+                        Submit
+                    </button>
+                </div>
+            </form>
+
+            <div class="end-session-footer">
+                <button type="button"
+                        class="end-session-link"
+                        hx-post="/game/{{ game_id }}/end"
+                        hx-target="#game-body"
+                        hx-swap="outerHTML">
+                    End session
+                </button>
             </div>
         {% endif %}
 
