@@ -40,3 +40,6 @@ tests/reports/*.html
 
 # Documentation-generated plots (keep the .md, drop regenerable images)
 docs/_build/
+
+# Playwright diagnostic output (screenshots + logs)
+diagnose/
