@@ -2,6 +2,11 @@
 
 {% block content %}
 <section class="game">
+    {# Audio element is intentionally OUTSIDE #game-body so it survives
+       htmx swaps. This is what lets Skip extend a playing clip rather
+       than restarting from zero — the same audio object keeps playing
+       while the round rows / buttons below get replaced. #}
+    <audio id="heardle-audio" preload="auto"></audio>
     {% include "partials/game_body.html" %}
 </section>
 {% endblock %}

@@ -221,6 +221,20 @@ code { background: var(--surface-raised); padding: 0.1rem 0.4rem; border-radius:
     background: var(--bg);
     opacity: 0.8;
 }
+.clip-playhead {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 3px;
+    left: 0%;
+    background: var(--fg);
+    border-radius: 2px;
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+    pointer-events: none;
+    will-change: left;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+}
 .clip-times {
     display: flex;
     justify-content: space-between;

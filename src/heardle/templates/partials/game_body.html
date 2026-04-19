@@ -16,7 +16,8 @@
      data-finished="{{ state.finished|lower }}"
      data-session-finished="{{ session_finished|lower }}">
 
-    <audio id="heardle-audio" preload="auto"></audio>
+    {# The <audio> element lives in game.html (outside this partial) so it
+       survives htmx swaps — essential for the Skip-extends behaviour. #}
 
     <header class="session-header">
         {% if session_finished %}
@@ -130,6 +131,9 @@
                 <div class="clip-tick"
                      style="left: {{ (d / max_seconds * 100)|round(2) }}%;"></div>
             {% endfor %}
+            {# Playback cursor: driven by player.js via requestAnimationFrame
+               while audio is playing. Hidden (opacity 0) when paused. #}
+            <div class="clip-playhead"></div>
         </div>
         <div class="clip-times">
             <span>0:{{ '%02d'|format(clip_length_seconds) }}</span>
