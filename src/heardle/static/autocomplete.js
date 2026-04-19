@@ -20,7 +20,7 @@
     function initAutocomplete() {
         const input = document.getElementById("guess-input");
         const list = document.getElementById("autocomplete-list");
-        const hiddenId = document.getElementById("guess-spotify-id");
+        const hiddenId = document.getElementById("guess-track-id");
         const submit = document.getElementById("submit-guess");
         if (!input || !list || !hiddenId || !submit) return;  // game is finished
 

@@ -1,20 +1,24 @@
 {#
-    The swappable interior of the game page. htmx replaces this element via
-    out-of-band swap after every POST to /game/{id}/guess or /game/{id}/skip.
+    Swappable interior of the game page. htmx replaces this element after
+    every POST to /game/{id}/guess or /game/{id}/skip.
 
-    Context variables (set by api.py):
+    Context variables (set by api.py _game_context):
       - game_id: string
       - state: GameState
       - clip_length_seconds: int (0 when the game is over)
       - target: Track | None (non-null only when the game is finished)
       - score: int | None (non-null only when the game is finished)
-      - guess_lookup: dict[spotify_id -> {title, artist}]
+      - guess_lookup: dict[track_id -> {title, artist}]
 #}
 
 <div id="game-body"
+     data-game-id="{{ game_id }}"
      data-clip-length="{{ clip_length_seconds }}"
      data-round-index="{{ state.round_index }}"
      data-finished="{{ state.finished|lower }}">
+
+    {# Single audio element for the whole game — reused across rounds. #}
+    <audio id="heardle-audio" preload="auto"></audio>
 
     <ol class="rounds">
     {% for i in range(6) %}
@@ -77,7 +81,7 @@
                            data-game-id="{{ game_id }}">
                     <ul id="autocomplete-list" class="autocomplete-list" hidden></ul>
                 </div>
-                <input id="guess-spotify-id" name="guess_spotify_id" type="hidden">
+                <input id="guess-track-id" name="guess_track_id" type="hidden">
                 <button type="submit" id="submit-guess" disabled>Submit</button>
             </form>
 
