@@ -26,8 +26,34 @@
     // multiple songs; a game_id-only cache would hand back the previous
     // song's preview after a Next.
     const PREVIEW_CACHE = new Map();  // `${game_id}:${target_id}` -> preview_url
+    const VOLUME_KEY = "heardle:volume";
+    const DEFAULT_VOLUME = 25;  // first-run default, percent
     let clipPauseHandle = null;
     let currentAudio = null;
+
+    function currentVolumePercent() {
+        const stored = localStorage.getItem(VOLUME_KEY);
+        const n = stored === null ? DEFAULT_VOLUME : parseInt(stored, 10);
+        if (Number.isNaN(n) || n < 0 || n > 100) return DEFAULT_VOLUME;
+        return n;
+    }
+
+    function initVolumeControl() {
+        const slider = document.getElementById("volume-slider");
+        const readout = document.getElementById("volume-readout");
+        const audio = document.getElementById("heardle-audio");
+        if (!slider || !audio) return;
+        const vol = currentVolumePercent();
+        slider.value = String(vol);
+        audio.volume = vol / 100;
+        if (readout) readout.textContent = `${vol}%`;
+        slider.addEventListener("input", () => {
+            const v = parseInt(slider.value, 10);
+            audio.volume = v / 100;
+            localStorage.setItem(VOLUME_KEY, String(v));
+            if (readout) readout.textContent = `${v}%`;
+        });
+    }
 
     async function fetchPreviewUrl(gameId) {
         const response = await fetch(`/game/${gameId}/preview`);
@@ -46,6 +72,10 @@
         const audio = document.getElementById("heardle-audio");
         if (!audio) return;
         currentAudio = audio;
+        // Ensure volume reflects the current slider state — belt-and-braces,
+        // because the audio element may have been recreated by a swap after
+        // the initial ``initVolumeControl`` ran.
+        audio.volume = currentVolumePercent() / 100;
 
         const previewUrl = await fetchPreviewUrl(gameId);
         if (!previewUrl) return;
@@ -94,6 +124,12 @@
         }
     });
 
-    document.addEventListener("DOMContentLoaded", initPlayButton);
-    document.body.addEventListener("htmx:afterSwap", initPlayButton);
+    document.addEventListener("DOMContentLoaded", () => {
+        initPlayButton();
+        initVolumeControl();
+    });
+    document.body.addEventListener("htmx:afterSwap", () => {
+        initPlayButton();
+        initVolumeControl();
+    });
 })();

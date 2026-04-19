@@ -265,6 +265,32 @@ code { background: var(--surface-raised); padding: 0.1rem 0.4rem; border-radius:
 }
 
 /* -------------------------------------------------------------------------
+ * Volume slider — small inline control below the play button
+ * ------------------------------------------------------------------------- */
+
+.volume-control {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 240px;
+    margin: 0.5rem auto 0.5rem auto;
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+.volume-icon { font-size: 1rem; user-select: none; }
+.volume-readout {
+    min-width: 3ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted-strong);
+}
+#volume-slider {
+    flex: 1;
+    accent-color: var(--accent-play);
+    cursor: pointer;
+}
+
+/* -------------------------------------------------------------------------
  * Guess input + autocomplete
  * ------------------------------------------------------------------------- */
 

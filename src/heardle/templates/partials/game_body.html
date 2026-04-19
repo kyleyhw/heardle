@@ -185,6 +185,19 @@
                 </button>
             </div>
 
+            {# Volume defaults to 25 % on first load; thereafter the value
+               saved in localStorage wins, so the player does not get blasted
+               after each htmx swap. #}
+            <div class="volume-control">
+                <label for="volume-slider" class="volume-icon" aria-hidden="true">🔊</label>
+                <input id="volume-slider"
+                       type="range"
+                       min="0" max="100" step="1"
+                       value="25"
+                       aria-label="Playback volume">
+                <span id="volume-readout" class="volume-readout">25%</span>
+            </div>
+
             <form id="guess-form"
                   class="guess-form"
                   hx-post="/game/{{ game_id }}/guess"
