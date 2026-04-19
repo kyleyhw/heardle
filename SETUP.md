@@ -1,129 +1,73 @@
 # Setup
 
-One-time steps to bring a fresh clone to a playable state. Roughly 10 minutes of active work (plus the Kaggle download in the background).
-
----
-
-## 1. Local environment
-
-Requires Python 3.12+ and [`uv`](https://docs.astral.sh/uv/).
+The default iTunes-backed mode needs **nothing** beyond a Python 3.12+
+toolchain. Clone, sync, run.
 
 ```bash
 git clone https://github.com/kyleyhw/heardle.git
 cd heardle
-uv sync                          # install runtime + dev deps from uv.lock
-uv run pre-commit install        # activate ruff + detect-secrets + ty hooks
-cp .env.example .env             # create your local env file
-```
-
-Open `.env` in your editor — you'll fill in four values across the next two sections.
-
----
-
-## 2. Spotify Developer app (required)
-
-This is the only unavoidable Spotify-side step. The app gives you the `client_id` and `client_secret` needed for OAuth. Premium is required for playback — see [docs/audio_pipeline.md](docs/audio_pipeline.md) for why.
-
-1. Go to **https://developer.spotify.com/dashboard** and log in with your Spotify account (the one you stream music with, which must be Premium).
-2. Accept the Developer Terms of Service if prompted.
-3. Click **Create app** and fill the form:
-   - **App name**: anything, e.g. `heardle-local`.
-   - **App description**: e.g. `Personal Heardle clone, local use only`.
-   - **Website**: optional, can leave blank.
-   - **Redirect URIs**: add exactly **`http://127.0.0.1:8000/callback`** (must match character-for-character; use `127.0.0.1`, not `localhost`).
-   - **Which API/SDKs are you planning to use?**: tick both **Web API** and **Web Playback SDK**.
-4. Accept the ToS and **Save**.
-5. Open the new app. Copy the **Client ID**. Click **View client secret** and copy the **Client Secret**.
-
-Paste them into `.env`:
-
-```
-SPOTIFY_CLIENT_ID=<your client id>
-SPOTIFY_CLIENT_SECRET=<your client secret>
-```
-
-Now generate two random session secrets:
-
-```bash
-uv run python -c "import secrets; print(secrets.token_urlsafe(64))"
-uv run python -c "import secrets; print(secrets.token_urlsafe(64))"
-```
-
-Paste the two outputs into `SESSION_SECRET=` and `GAME_STATE_SECRET=` respectively.
-
----
-
-## 3. Popular-songs corpus (required for autocomplete)
-
-Heardle's guess box is backed by a precomputed snapshot. We default to the 1.2M `rodolfofigueroa/spotify-1.2m-songs` dataset on Kaggle.
-
-### 3a. Download the CSV
-
-1. Sign in (or sign up, free) at **https://www.kaggle.com**.
-2. Go to **https://www.kaggle.com/datasets/rodolfofigueroa/spotify-1.2m-songs**.
-3. Click **Download** — accept the dataset terms if prompted. You'll get a zip file; extract `tracks_features.csv` (~200 MB).
-
-### 3b. Convert to our canonical parquet
-
-```bash
-uv run python -m scripts.load_corpus --input path/to/tracks_features.csv
-```
-
-This writes `data/popular_corpus.parquet` (~30 MB, gitignored). The script auto-detects the source schema; the summary at the end should report ~1.2M rows and a release-year range spanning roughly 1920–2020.
-
-### 3c. (Optional) Plot the year distribution
-
-```bash
-uv run python -m scripts.plot_corpus_distribution
-```
-
-Writes `docs/corpus_distribution.png` showing the release-year histogram with the `YEAR_THRESHOLD=2000` reference line. Inspect this if you want to tune the threshold — see [docs/corpus_threshold.md](docs/corpus_threshold.md) for how.
-
-### Alternative dataset
-
-If you prefer a smaller snapshot that retains Spotify's `popularity` field (for a cleaner filter), use `maharshipandya/spotify-tracks-dataset` instead (~114k rows). The loader auto-detects the schema — same command, different CSV.
-
----
-
-## 4. Run it
-
-```bash
+uv sync                  # install dependencies
 uv run uvicorn heardle.api:app --reload
 ```
 
-Navigate to **http://127.0.0.1:8000**. Click **Log in with Spotify**, accept the scopes, and you should land back on the index page with your Spotify display name in the header. Pick a source (artist ID, playlist ID, or year) and **Start game**.
+Navigate to **http://127.0.0.1:8000**, pick a source (artist / year /
+search), and play. No accounts, no API keys, no Premium.
 
-### Finding Spotify IDs
+## Optional
 
-The last URL segment is the ID:
+Each of these is independent. You can ignore all of them for personal local
+play.
 
+### Pre-commit hooks
+
+```bash
+uv run pre-commit install
 ```
-https://open.spotify.com/artist/6eUKZXaKkcviH0Ku9w2n3V
-                                  └── artist id ─────┘
 
-https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
-                                  └──── playlist id ────┘
+Runs `ruff`, `ruff-format`, `detect-secrets`, and `ty` on every commit.
+
+### Pin your session secret
+
+Out of the box the session cookie is signed with an ephemeral random token
+that changes on every server restart — so in-progress games reset if you
+bounce the server. To pin the secret:
+
+```bash
+cp .env.example .env
+uv run python -c "import secrets; print(secrets.token_urlsafe(64))"
+# paste the output into SESSION_SECRET= in .env
 ```
 
-For year, just type the year (e.g. `2020`).
+### Offline autocomplete corpus (future enhancement)
 
----
+The current autocomplete hits iTunes live on each keystroke (debounced
+client-side to 300 ms). If you want a pre-indexed offline corpus instead,
+see [docs/corpus_threshold.md](docs/corpus_threshold.md) — the Kaggle
+pipeline from Phase 4 is kept in the tree and can be wired back in with
+one config flag when desired.
 
-## 5. Troubleshooting
+### Spotify backend (future toggle)
+
+Playing from Spotify's Web Playback SDK (full-track playback, intro-from-t=0
+fidelity) is deliberately disabled in the current build — the February
+2026 Web API changes removed endpoints we depended on (`/artists/{id}/top-tracks`,
+certain playlist fields), and re-enabling requires a rework of
+`heardle.spotify`. Setting `AUDIO_BACKEND=spotify` in `.env` currently
+surfaces a 503 on game creation so the disabled branch is visible rather
+than silently broken. See [docs/oauth_flow.md](docs/oauth_flow.md) for the
+OAuth plumbing that's already in place for when the backend returns.
+
+## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Spotify login page shows "Invalid redirect URI" | Your dashboard redirect URI does not match `.env` exactly | Both must be `http://127.0.0.1:8000/callback` character-for-character. `localhost` won't work. |
-| 403 after login with "Premium" in the error | Your account is free or family child | Upgrade to Premium Individual / Family / Duo / Student |
-| Autocomplete returns nothing | Corpus parquet not built | Run the loader script (step 3b) |
-| Server starts but 500s on `/` | `.env` not copied or fields missing | `cp .env.example .env` and populate all four required fields |
-| Clips play longer than expected | Tab throttled (backgrounded) | Keep the browser tab focused; see [docs/audio_pipeline.md](docs/audio_pipeline.md) |
-| `scripts.load_corpus` errors "Could not identify schema" | Downloaded a different dataset | Check the CSV columns against the supported schemas in the script's module docstring |
-
----
+| Server starts, `/` 200s, but `/game/new` 400s "zero playable tracks" | iTunes returned no preview-URL-bearing rows for that artist / year | Try a less obscure artist; many genuinely obscure tracks have no Apple preview |
+| Autocomplete doesn't surface the target | iTunes' global relevance doesn't rank a deep cut in the top 10 | The server falls back to substring match against the game's correct pool, so the target should still appear when you type part of the title — try a different substring |
+| Clip sounds like the chorus, not the intro | Apple picks the 30s window; not always the intro | Expected. See [docs/audio_pipeline.md](docs/audio_pipeline.md) for the tradeoff |
+| Audio hangs after one round | htmx swap left stale audio | Reload the page; this shouldn't happen after Phase 7c's beforeSwap pause — if it does, file an issue |
 
 ## Next steps
 
-- Hosting it so friends can play without cloning: [docs/deployment.md](docs/deployment.md).
-- Tuning the popular-corpus filter: [docs/corpus_threshold.md](docs/corpus_threshold.md).
-- Understanding the architecture: [docs/architecture.md](docs/architecture.md).
+- [docs/architecture.md](docs/architecture.md) — request flow and module responsibilities
+- [docs/audio_pipeline.md](docs/audio_pipeline.md) — iTunes preview pipeline, clip-cutoff timing
+- [docs/deployment.md](docs/deployment.md) — optional public-hosted mode

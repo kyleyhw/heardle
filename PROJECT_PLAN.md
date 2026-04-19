@@ -34,7 +34,16 @@ This document outlines the planned phases and tasks for developing the Heardle c
 21. [completed] `static/styles.css` — dark Heardle-esque layout with stacked round rows and Spotify-green accent.
 22. [completed] `api.py` expanded to full routing: `/`, `/auth/login`, `/callback`, `/auth/logout`, `/api/token`, `/game/new`, `/game/{id}`, `/game/{id}/guess|skip|play`, `/autocomplete`. Target track URI held server-side only (cheat-prevention). 14 unit tests via `TestClient` with dependency overrides.
 
-## Phase 6: End-to-end verification
-21. [completed] SETUP.md walkthrough (Spotify app, Kaggle download, corpus loader) and docs/deployment.md (optional Fly.io/Railway/Render hosting).
-22. [completed] Part A: automated checks pass (94 unit tests, 3 skipped integration, ruff + ty + detect-secrets green, server boots with only a placeholder `.env`). Report at `tests/reports/2026-04-19-phase6-initial-verification.md`.
-23. [pending] Part B: credential-gated integration tests + corpus load + manual play-through + clip-timing verification. Requires user-side Spotify Developer app registration and Kaggle download. Follow-up dated report under `tests/reports/` when complete.
+## Phase 6: End-to-end verification (Spotify path — deferred)
+21. [completed] SETUP.md walkthrough and docs/deployment.md (Spotify variant).
+22. [completed] Part A: automated checks pass (94 unit tests, 3 skipped integration). Report at `tests/reports/2026-04-19-phase6-initial-verification.md`.
+23. [pending] Part B: superseded by Phase 7 iTunes pivot. Spotify live-verification no longer on the critical path — the Spotify backend remains architecturally present but unwired, pending a future toggle.
+
+## Phase 7: iTunes pivot (for zero-setup "clone and play")
+24. [completed] `src/heardle/itunes.py` — async wrapper over iTunes Search API (artist / year / search / single-track), with dedup of album reissues and client-side year filtering. 17 respx-mocked unit tests.
+25. [completed] `Track.preview_url: str | None` added (iTunes populates it; Spotify leaves `None`).
+26. [completed] `api.py` rewritten: removed OAuth routes, added `GameSession` dataclass, new routes `/game/new` (artist/year/search), `/game/{id}/preview`, updated `/autocomplete` to proxy iTunes + union correct-pool substring matches.
+27. [completed] `config.py` reworked: all fields optional with defaults; `AUDIO_BACKEND` env var (default `"itunes"`, `"spotify"` reserved for future); session / game secrets fall back to ephemeral random.
+28. [completed] Templates updated: base.html dropped Spotify SDK; index.html new source selector; partials/game_body.html embeds `<audio>`; hidden input renamed to `guess_track_id`.
+29. [completed] `static/player.js` rewritten as an HTML5 `<audio>` player. Clip cutoff anchored on `audio.play()` promise resolution (±20 ms accuracy).
+30. [completed] `docs/` rewritten: SETUP.md shrunk to ~30 lines, docs/audio_pipeline.md rewritten for iTunes, docs/deployment.md simplified (no per-user auth), docs/architecture.md updated.

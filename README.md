@@ -1,6 +1,8 @@
 # Heardle
 
-A self-hosted, single-player Heardle clone that accepts any **Spotify artist**, **release year**, or **Spotify playlist** as the pool of possible answers. Plays expanding intro snippets (1 → 2 → 4 → 7 → 11 → 16 s) using the Spotify Web Playback SDK, with a search-as-you-type guess box whose autocomplete pool is the union of a precomputed popular-songs corpus and the current answer pool.
+A self-hosted, single-player Heardle clone. Pick an **artist**, a **release year**, or any **search term**; a random track from the resulting pool becomes the target. Plays expanding audio clips (1 → 2 → 4 → 7 → 11 → 16 s) with a search-as-you-type guess box.
+
+Runs out of the box with zero configuration — audio is sourced from iTunes' free 30-second previews. A Spotify-backed alternative (full-track playback, intro-from-t=0 fidelity) is architecturally plumbed but currently disabled pending the February 2026 Web API rework.
 
 ## Directory structure
 
@@ -69,19 +71,27 @@ $$\mathcal{G} = \mathcal{P} \cup \mathcal{C}.$$
 
 This guarantees that every element of $\mathcal{C}$ is typeable no matter how obscure, while $\mathcal{P}$ supplies a broad pool of plausible red herrings. The daily target is sampled uniformly, $t \sim \mathrm{Uniform}(\mathcal{C})$, with popularity-weighted sampling as a future extension.
 
-### Popularity proxy
+### Autocomplete pool
 
-Spotify's Web API does not expose raw play counts. The closest proxy, the `popularity` field $p \in [0, 100]$, is documented as roughly logarithmic in recent streams with a recency-weighted decay. Its exact relationship to raw play counts is non-public. As a concrete substitute for the requested "≥ 10,000 Spotify plays" threshold, we apply an empirical popularity threshold $\tau$ to a precomputed dataset snapshot:
+In the default iTunes mode the autocomplete hits iTunes Search on every (debounced) keystroke, returning iTunes' own relevance-ranked matches. The server additionally sweeps the active game's correct-answer pool for substring matches, guaranteeing that the target is always reachable from at least one substring of its title, even if iTunes' global ranking buries it.
 
-$$\mathcal{P} = \{t \in \text{snapshot} : p(t) \geq \tau\}.$$
-
-The rationale for the specific value of $\tau$ is derived from the snapshot's popularity distribution and documented in [docs/corpus_threshold.md](docs/corpus_threshold.md). The interpretation of the histogram is: $\tau$ is chosen at the knee point separating the long obscure tail from the recognisable mainstream mass, tuned so $|\mathcal{P}|$ lands in the $10^4$–$10^5$ range — large enough to feel "vast", small enough to keep memory + autocomplete latency bounded.
+An optional offline-corpus mode (pre-indexed Kaggle snapshot with rapidfuzz autocomplete) is preserved in the codebase from an earlier phase; it is currently off the critical path. See [docs/corpus_threshold.md](docs/corpus_threshold.md).
 
 ## Setup
 
-See **[SETUP.md](SETUP.md)** for the full walkthrough (Spotify Developer app, Kaggle corpus download, running the loader, starting the server). Expect ~10 minutes of active work plus the Kaggle download in the background.
+```bash
+git clone https://github.com/kyleyhw/heardle.git
+cd heardle
+uv sync
+uv run uvicorn heardle.api:app --reload
+```
 
-For deploying the hosted-URL experience so friends can play without cloning, see [docs/deployment.md](docs/deployment.md).
+Navigate to **http://127.0.0.1:8000** and play. No accounts, no API keys,
+no Premium. See [SETUP.md](SETUP.md) for the few optional knobs (stable
+session secret, pre-commit hooks, future Spotify toggle).
+
+For public-hosting so friends can play by visiting a URL, see
+[docs/deployment.md](docs/deployment.md).
 
 ## Running tests
 

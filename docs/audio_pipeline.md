@@ -1,62 +1,100 @@
 # Audio pipeline
 
-## Why the Web Playback SDK
+## Current backend: iTunes Search API
 
-See the top-level [architectural plan](../README.md) and `C:\Users\Kyle\.claude\plans\dazzling-launching-crab.md` for the full rationale. In summary:
-
-- Spotify `preview_url` was deprecated in November 2024 and returns `null` for nearly all tracks in newly-registered apps, so we cannot use free 30 s previews from the Web API.
-- iTunes / Apple Music previews exist and are auth-free, but Apple picks the 30 s window — often the chorus, not the intro. This breaks Heardle's "guess from the first second of the intro" contract.
-- The Web Playback SDK plays the real track starting at any chosen offset, so $T[0, d_i]$ is exactly the first $d_i$ seconds. The cost is the Premium requirement plus OAuth complexity, both of which are acceptable for a self-hosted single-player instance.
-
-## Playback sequence
+The default mode streams 30-second preview MP4s from Apple. Zero auth, zero
+configuration, near-universal coverage of the commercial music catalogue.
 
 ```
-Browser                                Spotify Web API                Spotify SDK (browser)
-   │                                        │                              │
-   │ load https://sdk.scdn.co/spotify-player.js                             │
-   ├────────────────────────────────────────┼──────────────────────────────▶
-   │                                        │  Player instance created     │
-   │                                        │                              │
-   │ player.connect()                       │                              │
-   │◀───────────────────────────────────────┼──────────────────────────────┤
-   │ ready event → {device_id: DID}         │                              │
-   │                                        │                              │
-   │ PUT /v1/me/player  {device_ids: [DID], play: false}                   │
-   ├───────────────────────────────────────▶│                              │
-   │                                        │                              │
-   │ User clicks "Start round" (user gesture unlocks audio)                │
-   │ PUT /v1/me/player/play?device_id=DID                                  │
-   │   body: {uris:["spotify:track:TID"], position_ms: 0}                  │
-   ├───────────────────────────────────────▶│                              │
-   │                                        │  SDK begins playback         │
-   │ player_state_changed event             │                              │
-   │◀───────────────────────────────────────┼──────────────────────────────┤
-   │ record t_play_start = performance.now()                               │
-   │ setTimeout(() => player.pause(), d_i*1000)                            │
+Browser                                 Server                          iTunes
+   │                                      │                               │
+   │  user clicks Play                    │                               │
+   │  GET /game/{id}/preview              │                               │
+   ├─────────────────────────────────────▶│                               │
+   │                                      │                               │
+   │  {preview_url: "https://..."}        │                               │
+   │◀─────────────────────────────────────┤                               │
+   │                                      │                               │
+   │  audio.src = preview_url             │                               │
+   │  audio.play()  (returns promise)     │                               │
+   │                                      │                               │
+   │  GET preview_url (audio element)     │                               │
+   ├──────────────────────────────────────┴──────────────────────────────▶│
+   │  MP4/AAC bytes                                                       │
+   │◀─────────────────────────────────────────────────────────────────────┤
+   │  play() promise resolves             │                               │
+   │  record t_play_start = performance.now()                             │
+   │  setTimeout(audio.pause, d_i*1000)   │                               │
 ```
+
+The preview URL itself is fetched from the server lazily (first click of
+Play) rather than rendered into the page HTML — a curious player cannot
+simply view-source to hear the clip early. The URL is still visible in the
+browser's network tab after the first play, which is acceptable for a
+personal hobby game; a determined cheater is not the threat model.
+
+## Why not Spotify?
+
+Full-track offset-addressable playback (i.e. "the first $d_i$ seconds of the
+track starting at t = 0") requires the Spotify Web Playback SDK, which in
+turn requires:
+
+1. A Spotify Developer app (3-minute dashboard registration).
+2. The player's Spotify account to be Premium.
+3. An OAuth Authorization Code flow in the browser.
+
+As of the February 2026 Spotify Web API update, new Development-Mode apps
+are also capped at 5 authorised users and are restricted to a smaller
+endpoint set — `GET /artists/{id}/top-tracks` was removed outright,
+`GET /playlists/{id}/tracks` renamed to `/items` with a response-shape
+change, and `GET /search` capped at 10 results per page. See the
+[Spotify blog post](https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security)
+and the [migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
+
+The iTunes pivot trades the "first second of the real intro" feel for
+zero-setup universal access. Apple chooses the 30-second window per track,
+so clips sometimes start mid-chorus instead of mid-intro. For most tracks
+the difference is small enough that the game still feels like Heardle.
+
+The `AUDIO_BACKEND` env var keeps the toggle path open: setting it to
+`spotify` routes game creation through a branch that currently returns 503
+but is architecturally plumbed. When Spotify's new API stabilises (or we
+rework `heardle.spotify` against the new endpoint set), re-enabling the
+Spotify path is a handful of lines of code plus the corresponding SDK-based
+player-side rewrite in `player.js`.
 
 ## Clip-cutoff precision
 
-The naïve implementation `setTimeout(player.pause, d_i * 1000)` scheduled from the moment `play()` is *called* has two error sources:
+Two error sources, combined bounding the measured clip length:
 
-1. **SDK play-latency** — the ~50–100 ms between `play()` returning and audio actually starting.
-2. **`setTimeout` jitter** — the browser's event loop may fire 0 to ~50 ms late, especially under tab-throttling.
+1. **Browser-side audio startup latency** — the time between `audio.play()`
+   being called and the audio subsystem actually emitting sound. On
+   desktop-class browsers with a preloaded `<audio>` element this is
+   typically 10–30 ms; on mobile Safari it can reach 100+ ms for the first
+   clip of a session.
 
-Combined, the audible clip could be anywhere from $d_i - 0$ to $d_i + 150$ ms long — acceptable for $d_i = 16$ s, borderline for $d_i = 1$ s (15% relative error).
+2. **`setTimeout` jitter** — the browser's event loop may fire the pause
+   callback 0 to ~50 ms late, especially under tab throttling.
 
-Mitigation: anchor the pause to the actual audio-start moment. Subscribe to `player.addListener('player_state_changed', cb)`; on the first callback where `state.position > 0 && !state.paused`, record $t_\text{play start}$ from `performance.now()` and schedule
-
-```javascript
-const targetMs = tPlayStart + d_i * 1000;
-const delay = targetMs - performance.now();
-setTimeout(() => player.pause(), delay);
-```
-
-This collapses source (1) to ~0 ms residual and keeps source (2) bounded at ~20 ms on a focused tab. The remaining jitter is well inside human perception thresholds for audio duration (~50 ms at short durations).
+Our mitigation anchors the pause-schedule on `await audio.play()`, whose
+promise resolves *after* the audio subsystem has begun playback. This
+collapses source (1) to its residual (the time between resolution and the
+first audible sample, usually < 5 ms) and leaves only source (2) as
+significant. Net expected error on the 1 s round-zero clip: ±20 ms, well
+below the psychoacoustic duration-discrimination threshold.
 
 ## Known failure modes
 
-- **Autoplay policy.** Most browsers block programmatic audio until a user gesture. We wrap the first `play()` in a click handler on an explicit "Start" button. Subsequent rounds reuse the already-unlocked context.
-- **Device transfer race.** The SDK `ready` event can fire before `PUT /v1/me/player` has been honoured. We wait for `ready` *and* a successful 2xx on the device-transfer call before enabling the "Start" button.
-- **Track unavailable in user's market.** Some tracks 404 on `PUT /me/player/play`. We surface this as "skip round" with an explanatory toast.
-- **Tab throttling.** Backgrounded tabs throttle `setTimeout` to once per second. We detect `document.visibilityState === 'hidden'` during a round and warn the player.
+- **Autoplay policy.** Browsers require a user gesture before letting a page
+  play audio. The Play button itself is the gesture; subsequent rounds
+  inherit the unlocked audio context.
+- **Preview-less tracks.** A handful of iTunes catalogue entries have no
+  `previewUrl`. Our loader drops these at parse time; they never reach the
+  target-picker.
+- **Region blocks.** A track available in one country's iTunes storefront
+  may return 404 on preview fetch from another. We expose `ITUNES_COUNTRY`
+  in `.env` so the user can pick the storefront the server queries; for
+  most English-language catalogue `US` works.
+- **Tab throttling.** Backgrounded tabs throttle `setTimeout` to once per
+  second. An explicit pause still fires when the tab is refocused, but the
+  clip length is not enforceable while the tab is hidden.
