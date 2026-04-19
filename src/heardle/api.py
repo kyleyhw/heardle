@@ -4,13 +4,13 @@ Architecture
 ------------
 - Session state is a signed cookie managed by Starlette's ``SessionMiddleware``;
   in iTunes mode it holds only ``active_game_id``.
+- A *session* spans multiple songs drawn without replacement from the chosen
+  source pool. Each *song* is one Heardle puzzle with the canonical
+  1-2-4-7-11-16 s clip-reveal schedule. Session ends when the user clicks
+  End, or when the remaining pool is exhausted after the final song.
 - Game state lives in a module-level dict keyed by a random game id, along
-  with the full target Track (including ``preview_url``) and the
-  correct-answer pool for guess-row display. The target's ``preview_url`` is
-  never sent to the browser in HTML; it is fetched via a separate endpoint
-  only when the player clicks Play. (It is technically visible in the
-  network tab afterwards, which is acceptable for a hobby single-player
-  game.)
+  with the current target Track (including ``preview_url``, server-only),
+  the remaining pool, and the history of completed songs.
 - Settings and the current audio backend are resolved via FastAPI
   dependencies so tests can override them without touching the environment.
 
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import random
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -49,33 +50,60 @@ logger = logging.getLogger("heardle")
 
 
 # ---------------------------------------------------------------------------
-# Game session dataclass
+# Session / result dataclasses
 # ---------------------------------------------------------------------------
 
 
 @dataclass
+class SongResult:
+    """Outcome of one completed song, recorded into the session history."""
+
+    target: Track
+    guesses: tuple[str | None, ...]
+    won: bool
+    score: int
+
+
+@dataclass
 class GameSession:
-    """Everything the server knows about one in-flight game.
+    """Server-side state for one multi-song session.
 
     Attributes
     ----------
     state
-        Pure game state (round index, guesses, finished/won). Lives in
-        :mod:`heardle.game`.
+        Pure game state for the *current* song (round index, guesses,
+        finished/won). Replaced on each advance to a new song.
     target
-        The full :class:`Track` the player is guessing. Server-only — the
-        ``preview_url`` inside is surfaced to the browser only through the
-        ``/game/{id}/play`` endpoint.
+        The full :class:`Track` for the current song — includes the
+        ``preview_url`` which is released to the browser only via the
+        ``/game/{id}/preview`` route.
     correct_pool
-        Dict keyed by ``track_id`` of every track that could have been the
-        target for this game. Used to render human-readable guess rows for
-        wrong guesses (when the id is in the pool) and for fallback
-        autocomplete.
+        Every track that could have been a target in this session, keyed
+        by id. Used for autocomplete-pool union and to render wrong-guess
+        rows with readable title + artist labels.
+    remaining_pool
+        Tracks not yet played this session. A song is popped off this
+        list on each advance (without replacement).
+    history
+        List of :class:`SongResult` entries, one per completed song in
+        the order they were played.
+    source_type, source_value
+        The source selection the user made (``artist`` / ``year`` /
+        ``search`` + value). Kept on the session so the scoreboard can
+        render the context without re-asking.
+    session_finished
+        Set True when the user explicitly ends the session or when a
+        Next is attempted with an empty remaining_pool.
     """
 
     state: GameState
     target: Track
-    correct_pool: dict[str, Track] = field(default_factory=dict)
+    correct_pool: dict[str, Track]
+    remaining_pool: list[Track]
+    history: list[SongResult]
+    source_type: str
+    source_value: str
+    session_finished: bool = field(default=False)
 
 
 _games: dict[str, GameSession] = {}
@@ -118,11 +146,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # ---------------------------------------------------------------------------
 
 
-app = FastAPI(title="Heardle", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Heardle", version="0.3.0", lifespan=lifespan)
 
-# SessionMiddleware's secret must resolve at app-construction time, before
-# lifespan runs. We call ``load_settings`` directly for that single value;
-# everything else goes through the cached ``get_settings`` dependency.
 _session_secret = load_settings().session_secret
 app.add_middleware(
     SessionMiddleware,
@@ -167,7 +192,7 @@ async def game_new(
     source_type: Annotated[str, Form()],
     source_value: Annotated[str, Form()],
 ) -> RedirectResponse:
-    """Build 𝒞 from the requested source, pick a target uniformly, redirect to /game/{id}."""
+    """Start a new multi-song session and redirect to the first song's page."""
     if settings.audio_backend != "itunes":
         raise HTTPException(
             status_code=503,
@@ -177,12 +202,12 @@ async def game_new(
             ),
         )
 
-    correct_pool = await _build_correct_pool_itunes(
+    pool = await _build_correct_pool_itunes(
         source_type=source_type,
         source_value=source_value,
         country=settings.itunes_country,
     )
-    if not correct_pool:
+    if not pool:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -191,15 +216,20 @@ async def game_new(
             ),
         )
 
-    # Use ``random`` rather than ``numpy`` here — we do not pay the numpy import
-    # cost on the hot path when a simple uniform pick over a small list is enough.
-    target = random.choice(correct_pool)
+    # Shuffle first so the play order is not iTunes' ranked order. Then pop the
+    # first song as the initial target; the rest become the remaining pool.
+    random.shuffle(pool)
+    first_target = pool.pop()
 
     game_id = _new_game_id()
     _games[game_id] = GameSession(
-        state=initial_state(target.spotify_id),
-        target=target,
-        correct_pool={t.spotify_id: t for t in correct_pool},
+        state=initial_state(first_target.spotify_id),
+        target=first_target,
+        correct_pool={t.spotify_id: t for t in [first_target, *pool]},
+        remaining_pool=pool,
+        history=[],
+        source_type=source_type,
+        source_value=source_value,
     )
     request.session[_SESSION_GAME_ID] = game_id
     return RedirectResponse(url=f"/game/{game_id}", status_code=303)
@@ -224,10 +254,12 @@ async def game_guess(
     game_id: str,
     guess_track_id: Annotated[str, Form()],
 ) -> HTMLResponse:
-    """Apply a guess and return the updated game body partial."""
+    """Apply a guess to the current song and return the updated body partial."""
     session = _games.get(game_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Unknown game id.")
+    if session.session_finished:
+        raise HTTPException(status_code=409, detail="Session has ended.")
     try:
         new_state = apply_guess(session.state, guess_track_id)
     except ValueError as e:
@@ -242,10 +274,12 @@ async def game_guess(
 
 @app.post("/game/{game_id}/skip", response_class=HTMLResponse)
 async def game_skip_route(request: Request, game_id: str) -> HTMLResponse:
-    """Skip the current round and return the updated game body partial."""
+    """Skip the current round and return the updated body partial."""
     session = _games.get(game_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Unknown game id.")
+    if session.session_finished:
+        raise HTTPException(status_code=409, detail="Session has ended.")
     try:
         new_state = game_skip(session.state)
     except ValueError as e:
@@ -258,26 +292,72 @@ async def game_skip_route(request: Request, game_id: str) -> HTMLResponse:
     )
 
 
-@app.get("/game/{game_id}/preview")
-async def game_preview(game_id: str) -> JSONResponse:
-    """Return the target track's preview URL.
+@app.post("/game/{game_id}/next", response_class=HTMLResponse)
+async def game_next(request: Request, game_id: str) -> HTMLResponse:
+    """Advance to the next song in the session.
 
-    The URL is only released after the client explicitly requests it — we do
-    not embed it in the page HTML where a casual inspector could read it. It
-    is still visible in the network tab after the first play, which is an
-    acceptable leak for a hobby single-player game.
+    Only valid when the current song is finished and the session itself is not.
+    When the remaining pool is empty, this transitions the session into its
+    finished state (scoreboard view).
     """
     session = _games.get(game_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Unknown game id.")
-    if session.state.finished:
-        # After the game ends the target is revealed in the result panel
-        # anyway, so exposing the URL post-finish is harmless.
-        pass
+    if session.session_finished:
+        raise HTTPException(status_code=409, detail="Session has ended.")
+    if not session.state.finished:
+        raise HTTPException(status_code=409, detail="Current song is not finished.")
+    _record_current_song_result(session)
+    if not session.remaining_pool:
+        session.session_finished = True
+    else:
+        _draw_next_song(session)
+    return templates.TemplateResponse(
+        request,
+        "partials/game_body.html",
+        _game_context(game_id, session),
+    )
+
+
+@app.post("/game/{game_id}/end", response_class=HTMLResponse)
+async def game_end(request: Request, game_id: str) -> HTMLResponse:
+    """End the session and render the scoreboard.
+
+    If the current song is finished and not yet recorded, it is added to the
+    history before finalising. An in-progress current song is abandoned — not
+    counted toward the scoreboard.
+    """
+    session = _games.get(game_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown game id.")
+    if not session.session_finished:
+        if session.state.finished and not _current_song_already_recorded(session):
+            _record_current_song_result(session)
+        session.session_finished = True
+    return templates.TemplateResponse(
+        request,
+        "partials/game_body.html",
+        _game_context(game_id, session),
+    )
+
+
+@app.get("/game/{game_id}/preview")
+async def game_preview(game_id: str) -> JSONResponse:
+    """Return the current song's preview URL on demand.
+
+    The URL is deliberately not rendered into the page HTML; releasing it
+    only via this endpoint means a player has to take an explicit action
+    before the preview becomes visible in the network tab.
+    """
+    session = _games.get(game_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown game id.")
+    if session.session_finished:
+        raise HTTPException(status_code=409, detail="Session has ended.")
     preview_url = session.target.preview_url
     if not preview_url:
         raise HTTPException(status_code=503, detail="Target has no preview URL.")
-    return JSONResponse({"preview_url": preview_url})
+    return JSONResponse({"preview_url": preview_url, "target_id": session.target.spotify_id})
 
 
 # ---------------------------------------------------------------------------
@@ -291,12 +371,11 @@ async def autocomplete(
     q: str = "",
     game_id: str | None = None,
 ) -> JSONResponse:
-    """Return up to 10 track matches for the user's partial guess, as JSON.
+    """Return up to 10 autocomplete matches for the user's partial guess.
 
-    In iTunes mode we proxy to iTunes' own relevance-ranked search. When a
-    game id is supplied we also sweep the game's correct_pool for matches
-    and merge them in, so the target is always findable even if iTunes'
-    global ranking buries it.
+    Proxies to iTunes search and unions the result with substring matches
+    from the active session's correct_pool, so the current target is always
+    findable by at least one substring of its title.
     """
     query = q.strip()
     if not query:
@@ -304,15 +383,11 @@ async def autocomplete(
     if settings.audio_backend != "itunes":
         return JSONResponse([])
 
-    # Fetch live suggestions from iTunes. Caller is expected to debounce.
     async with httpx.AsyncClient() as client:
         live = await itunes_mod.search_tracks(
             query, limit=10, country=settings.itunes_country, http_client=client
         )
 
-    # Supplement with fuzzy-ish substring matches from the correct pool, so
-    # that even if iTunes doesn't rank the target in the top 10, it still
-    # surfaces when the user types part of its title.
     pool_matches: list[Track] = []
     if game_id and game_id in _games:
         needle = query.lower()
@@ -379,16 +454,45 @@ def _dedup_by_id(tracks: list[Track]) -> list[Track]:
 
 def _new_game_id() -> str:
     """Cryptographically-random, URL-safe game id."""
-    import secrets as _secrets
+    return secrets.token_urlsafe(12)
 
-    return _secrets.token_urlsafe(12)
+
+def _record_current_song_result(session: GameSession) -> None:
+    """Append the current (finished) song's outcome to ``session.history``."""
+    state = session.state
+    session.history.append(
+        SongResult(
+            target=session.target,
+            guesses=state.guesses,
+            won=state.won,
+            score=game_score(state) if state.finished else 0,
+        )
+    )
+
+
+def _current_song_already_recorded(session: GameSession) -> bool:
+    """True if the current target's id is the last entry in ``history``.
+
+    We only need to check the tail because songs are recorded exactly once,
+    immediately on finish or on /end, in the order they are played.
+    """
+    if not session.history:
+        return False
+    return session.history[-1].target.spotify_id == session.target.spotify_id
+
+
+def _draw_next_song(session: GameSession) -> None:
+    """Pop the next target from the remaining pool and reset the per-song state."""
+    # ``pop()`` is O(1) from the end; the pool was pre-shuffled so this is
+    # equivalent to a uniform random draw without replacement.
+    next_track = session.remaining_pool.pop()
+    session.state = initial_state(next_track.spotify_id)
+    session.target = next_track
 
 
 def _game_context(game_id: str, session: GameSession) -> dict[str, object]:
     """Build the Jinja context shared by the full-page and partial templates."""
     state = session.state
-    # Guess-display lookup only needs to contain ids that were actually
-    # submitted; it produces {"title": ..., "artist": ...} rows in the UI.
     guess_lookup: dict[str, dict[str, str]] = {}
     for guess in state.guesses:
         if guess is None or guess in guess_lookup:
@@ -396,11 +500,29 @@ def _game_context(game_id: str, session: GameSession) -> dict[str, object]:
         if guess in session.correct_pool:
             t = session.correct_pool[guess]
             guess_lookup[guess] = {"title": t.title, "artist": t.primary_artist}
+
+    total_songs_in_session = len(session.correct_pool)
+    songs_played = len(session.history)
+    current_song_number = songs_played + 1 if not session.session_finished else songs_played
+    total_score = sum(r.score for r in session.history)
+    max_score = songs_played * 6  # 6 points max per song
+
     return {
         "game_id": game_id,
         "state": state,
         "clip_length_seconds": clip_length_for(state.round_index) if not state.finished else 0,
+        "max_clip_seconds": 16,  # the full preview window our d_i progression tops out at
         "target": session.target if state.finished else None,
         "score": game_score(state) if state.finished else None,
         "guess_lookup": guess_lookup,
+        # Session-level
+        "session_finished": session.session_finished,
+        "history": session.history,
+        "current_song_number": current_song_number,
+        "total_songs": total_songs_in_session,
+        "remaining_count": len(session.remaining_pool),
+        "total_score": total_score,
+        "max_score": max_score,
+        "source_type": session.source_type,
+        "source_value": session.source_value,
     }

@@ -22,19 +22,22 @@
 (function () {
     "use strict";
 
-    const PREVIEW_CACHE = new Map();  // game_id -> preview_url
+    // Cache keyed on (game_id, target_id) because a session moves through
+    // multiple songs; a game_id-only cache would hand back the previous
+    // song's preview after a Next.
+    const PREVIEW_CACHE = new Map();  // `${game_id}:${target_id}` -> preview_url
     let clipPauseHandle = null;
     let currentAudio = null;
 
     async function fetchPreviewUrl(gameId) {
-        if (PREVIEW_CACHE.has(gameId)) return PREVIEW_CACHE.get(gameId);
         const response = await fetch(`/game/${gameId}/preview`);
         if (!response.ok) {
             console.error("preview request failed:", response.status);
             return null;
         }
         const body = await response.json();
-        PREVIEW_CACHE.set(gameId, body.preview_url);
+        const key = `${gameId}:${body.target_id}`;
+        PREVIEW_CACHE.set(key, body.preview_url);
         return body.preview_url;
     }
 

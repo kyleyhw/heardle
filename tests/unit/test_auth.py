@@ -54,11 +54,16 @@ def test_sign_and_verify_roundtrip() -> None:
 def test_verify_rejects_tampered_state() -> None:
     """A state modified even by one character must fail verification.
 
-    Rationale: guards against an attacker forging a callback URL. Changing the
-    last character of the signed payload is the minimal tamper.
+    Rationale: guards against an attacker forging a callback URL. We flip
+    a character in the middle of the signed payload (rather than at the
+    very end) because the last character of an unpadded URL-safe-base64
+    encoding only contributes 2–4 bits and can sometimes be altered
+    without changing the decoded bytes — a base64 artefact, not an HMAC
+    weakness, but it would cause spurious flakes here.
     """
     state = sign_state(TEST_SECRET)
-    tampered = state[:-1] + ("A" if state[-1] != "A" else "B")
+    middle = len(state) // 2
+    tampered = state[:middle] + ("A" if state[middle] != "A" else "B") + state[middle + 1 :]
     with pytest.raises(BadSignature):
         verify_state(TEST_SECRET, tampered)
 
