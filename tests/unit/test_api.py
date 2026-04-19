@@ -1,276 +1,300 @@
-"""Unit tests for :mod:`heardle.api` routes.
+"""Unit tests for :mod:`heardle.api` routes (iTunes-backed mode).
 
-Uses ``fastapi.testclient.TestClient`` with dependency overrides to avoid
-hitting Spotify. Live OAuth and playback routes (anything that would call
-out to accounts.spotify.com or api.spotify.com for real) are covered by
-integration tests in a later phase; here we verify URL wiring, session
-handling, and game-state transitions exposed through the routes.
+Uses ``fastapi.testclient.TestClient`` with dependency overrides and
+``respx`` to intercept iTunes API calls. Covers URL wiring, session
+handling, game-state transitions, the preview-URL flow, and the
+``AUDIO_BACKEND`` toggle.
 """
 
 from __future__ import annotations
 
 from collections.abc import Generator
+from dataclasses import replace
 
-import pandas as pd
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 
-# ``SESSION_SECRET`` is seeded in ``tests/conftest.py`` so the ``heardle.api``
-# import below succeeds without a populated ``.env``.
 from heardle import api as api_mod
-from heardle.auth import TokenBundle
+from heardle.api import GameSession
 from heardle.config import Settings
-from heardle.corpus import Corpus
 from heardle.game import initial_state
+from heardle.spotify import Track
+
+
+def _sample_itunes_row(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 100,
+        "trackName": "Test Track",
+        "artistName": "Test Artist",
+        "collectionName": "Test Album",
+        "releaseDate": "2020-01-01T12:00:00Z",
+        "previewUrl": "https://audio-ssl.itunes.apple.com/test.m4a",
+    }
+    base.update(overrides)
+    return base
+
+
+def _track(**overrides: object) -> Track:
+    kw: dict[str, object] = {
+        "spotify_id": "100",
+        "title": "Test Track",
+        "primary_artist": "Test Artist",
+        "album_name": "Test Album",
+        "release_year": 2020,
+        "popularity": None,
+        "preview_url": "https://audio-ssl.itunes.apple.com/test.m4a",
+    }
+    kw.update(overrides)
+    return Track(**kw)  # type: ignore[arg-type]
 
 
 @pytest.fixture
-def fake_settings() -> Settings:
-    """A populated Settings suitable for all routes except the OAuth callback."""
+def itunes_settings() -> Settings:
     return Settings(
-        spotify_client_id="fake_client_id",  # pragma: allowlist secret
-        spotify_client_secret="fake_client_secret",  # pragma: allowlist secret
+        audio_backend="itunes",
+        spotify_client_id="",
+        spotify_client_secret="",
         spotify_redirect_uri="http://127.0.0.1:8000/callback",
         session_secret="fake_session",  # pragma: allowlist secret
         game_state_secret="fake_game_state",  # pragma: allowlist secret
         popular_corpus_path="data/popular_corpus.parquet",
         popularity_threshold=25,
         year_threshold=2000,
+        itunes_country="US",
     )
 
 
 @pytest.fixture
-def fake_corpus() -> Corpus:
-    """A tiny corpus that the autocomplete route can search against."""
-    df = pd.DataFrame(
-        [
-            ("id_1", "Halo", "Beyoncé", "Sasha Fierce", 2008, 80),
-            ("id_2", "Shape of You", "Ed Sheeran", "÷", 2017, 90),
-            ("id_3", "Blinding Lights", "The Weeknd", "After Hours", 2020, 85),
-        ],
-        columns=[
-            "spotify_id",
-            "title",
-            "primary_artist",
-            "album_name",
-            "release_year",
-            "popularity",
-        ],
-    ).astype({"release_year": "int32", "popularity": "Int32"})
-    return Corpus(df)
-
-
-@pytest.fixture
-def fake_token() -> TokenBundle:
-    return TokenBundle(
-        access_token="fake_access",  # pragma: allowlist secret
-        refresh_token="fake_refresh",  # pragma: allowlist secret
-        expires_at_epoch=9999999999.0,
-        scope="streaming user-read-email",
-    )
-
-
-@pytest.fixture
-def client(
-    fake_settings: Settings,
-    fake_corpus: Corpus,
-    fake_token: TokenBundle,
-) -> Generator[TestClient, None, None]:
-    """Yield a TestClient with deps overridden and module dicts cleaned."""
+def client(itunes_settings: Settings) -> Generator[TestClient, None, None]:
     api_mod._games.clear()
-    api_mod._autocomplete_pools.clear()
-    api_mod._correct_pool_meta.clear()
-    api_mod._target_track_meta.clear()
-    api_mod._corpus_cache[0] = fake_corpus
-
-    api_mod.app.dependency_overrides[api_mod.get_settings] = lambda: fake_settings
-    api_mod.app.dependency_overrides[api_mod.get_corpus] = lambda: fake_corpus
-    api_mod.app.dependency_overrides[api_mod.require_session_token] = lambda: fake_token
-
-    test_client = TestClient(api_mod.app)
-    yield test_client
-    api_mod.app.dependency_overrides.clear()
+    api_mod.app.dependency_overrides[api_mod.get_settings] = lambda: itunes_settings
+    try:
+        yield TestClient(api_mod.app)
+    finally:
+        api_mod.app.dependency_overrides.clear()
+        api_mod._games.clear()
 
 
 # ---------------------------------------------------------------------------
-# Index + autocomplete
+# Index
 # ---------------------------------------------------------------------------
 
 
 def test_index_renders(client: TestClient) -> None:
-    """Rationale: the landing page must respond 200 with the site heading.
-
-    If the index fails the entire app is dead on arrival, so a smoke-level
-    assertion here catches gross template or dependency wiring errors.
-    """
+    """Rationale: landing page must respond 200; catches gross template wiring bugs."""
     response = client.get("/")
     assert response.status_code == 200
     assert "Heardle" in response.text
-    assert "Pick a source" in response.text
 
 
-def test_autocomplete_returns_json(client: TestClient) -> None:
-    """Rationale: the autocomplete route is invoked on every keystroke in
-    the guess box; a silent regression here kills the whole input UX.
-    """
-    response = client.get("/autocomplete", params={"q": "halo"})
-    assert response.status_code == 200
-    results = response.json()
-    assert any(r["id"] == "id_1" for r in results)
-    assert results[0]["title"] == "Halo"
+# ---------------------------------------------------------------------------
+# Autocomplete
+# ---------------------------------------------------------------------------
 
 
-def test_autocomplete_empty_query_returns_empty_list(client: TestClient) -> None:
-    """Rationale: empty queries must not trigger a full-corpus scan."""
+def test_autocomplete_empty_query_returns_empty(client: TestClient) -> None:
+    """Rationale: empty query must not trigger an iTunes round-trip."""
     response = client.get("/autocomplete", params={"q": ""})
     assert response.status_code == 200
     assert response.json() == []
 
 
-# ---------------------------------------------------------------------------
-# Auth routes (non-live)
-# ---------------------------------------------------------------------------
-
-
-def test_login_redirects_to_spotify(client: TestClient) -> None:
-    """Rationale: ``/auth/login`` must 302 to accounts.spotify.com with the
-    expected query parameters. Missing scopes or a malformed state break the
-    entire login flow at the browser level, so it's important to cover here."""
-    response = client.get("/auth/login", follow_redirects=False)
-    assert response.status_code == 307 or response.status_code == 302
-    location = response.headers["location"]
-    assert location.startswith("https://accounts.spotify.com/authorize")
-    assert "client_id=fake_client_id" in location
-    assert "response_type=code" in location
-    assert "scope=streaming" in location
-
-
-def test_login_returns_503_without_client_id(client: TestClient, fake_settings: Settings) -> None:
-    """Rationale: if the user has not registered a Spotify app yet, the login
-    route should surface a clean 503, not a cryptic redirect to
-    accounts.spotify.com with an empty client_id."""
-    blank_settings = Settings(
-        spotify_client_id="",
-        spotify_client_secret=fake_settings.spotify_client_secret,
-        spotify_redirect_uri=fake_settings.spotify_redirect_uri,
-        session_secret=fake_settings.session_secret,
-        game_state_secret=fake_settings.game_state_secret,
-        popular_corpus_path=fake_settings.popular_corpus_path,
-        popularity_threshold=fake_settings.popularity_threshold,
-        year_threshold=fake_settings.year_threshold,
+@respx.mock
+def test_autocomplete_proxies_to_itunes(client: TestClient) -> None:
+    """Rationale: the keystroke-time autocomplete hits iTunes and reshapes the
+    response into ``{id, title, artist, year}`` rows the frontend expects."""
+    respx.get("https://itunes.apple.com/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "resultCount": 1,
+                "results": [
+                    _sample_itunes_row(trackId=42, trackName="Hello", artistName="Adele"),
+                ],
+            },
+        )
     )
-    api_mod.app.dependency_overrides[api_mod.get_settings] = lambda: blank_settings
-    response = client.get("/auth/login", follow_redirects=False)
-    assert response.status_code == 503
-
-
-def test_api_token_returns_access_token(client: TestClient, fake_token: TokenBundle) -> None:
-    """Rationale: the Web Playback SDK polls this endpoint to get a token;
-    the shape must remain {"access_token": "..."} for the SDK's callback."""
-    response = client.get("/api/token")
+    response = client.get("/autocomplete", params={"q": "hello"})
     assert response.status_code == 200
-    assert response.json() == {"access_token": fake_token.access_token}
+    body = response.json()
+    assert body == [
+        {"id": "42", "title": "Hello", "artist": "Adele", "year": 2020},
+    ]
 
 
-def test_logout_clears_session(client: TestClient) -> None:
-    """Rationale: logout must 303-redirect to "/"."""
-    response = client.get("/auth/logout", follow_redirects=False)
+@respx.mock
+def test_autocomplete_merges_game_correct_pool(client: TestClient) -> None:
+    """Rationale: the correct answer must be findable in autocomplete even if
+    iTunes' global ranking buries it — we union the game's correct_pool on
+    substring match before deduping."""
+    respx.get("https://itunes.apple.com/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "resultCount": 1,
+                "results": [_sample_itunes_row(trackId=999, trackName="Noise")],
+            },
+        )
+    )
+    target = _track(spotify_id="obscure", title="Obscure Deep Cut", primary_artist="X")
+    api_mod._games["game_abc"] = GameSession(
+        state=initial_state(target.spotify_id),
+        target=target,
+        correct_pool={target.spotify_id: target},
+    )
+    response = client.get("/autocomplete", params={"q": "obscure", "game_id": "game_abc"})
+    ids = [row["id"] for row in response.json()]
+    assert "obscure" in ids
+
+
+# ---------------------------------------------------------------------------
+# Game new
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_game_new_artist_source(client: TestClient) -> None:
+    """Rationale: the artist-source flow should call iTunes, pick a target,
+    store the session, and 303-redirect to the game page."""
+    respx.get("https://itunes.apple.com/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "resultCount": 2,
+                "results": [
+                    _sample_itunes_row(trackId=1, trackName="A"),
+                    _sample_itunes_row(trackId=2, trackName="B"),
+                ],
+            },
+        )
+    )
+    response = client.post(
+        "/game/new",
+        data={"source_type": "artist", "source_value": "ed sheeran"},
+        follow_redirects=False,
+    )
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    # One game must now exist with a target drawn from the pool.
+    assert len(api_mod._games) == 1
+    session = next(iter(api_mod._games.values()))
+    assert session.target.spotify_id in {"1", "2"}
+
+
+@respx.mock
+def test_game_new_empty_pool_returns_400(client: TestClient) -> None:
+    """Rationale: an artist name that resolves to zero playable tracks must
+    surface a 400 rather than a 500 with an empty-list crash."""
+    respx.get("https://itunes.apple.com/search").mock(
+        return_value=httpx.Response(200, json={"resultCount": 0, "results": []})
+    )
+    response = client.post(
+        "/game/new",
+        data={"source_type": "artist", "source_value": "asdfghjk_nomatch"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 400
+
+
+def test_game_new_rejects_spotify_backend(itunes_settings: Settings) -> None:
+    """Rationale: ``AUDIO_BACKEND=spotify`` is reserved for a future re-enable;
+    the current code base must 503 that branch rather than silently proceeding."""
+    spotify_settings = replace(itunes_settings, audio_backend="spotify")
+    api_mod._games.clear()
+    api_mod.app.dependency_overrides[api_mod.get_settings] = lambda: spotify_settings
+    try:
+        with TestClient(api_mod.app) as c:
+            response = c.post(
+                "/game/new",
+                data={"source_type": "artist", "source_value": "x"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 503
+    finally:
+        api_mod.app.dependency_overrides.clear()
 
 
 # ---------------------------------------------------------------------------
-# Game lifecycle — set up via direct dict mutation
+# Game page / guess / skip / preview
 # ---------------------------------------------------------------------------
 
 
-def _seed_game(corpus: Corpus, target_id: str = "id_1") -> str:
-    """Prime the module-level dicts with a game; return the game_id."""
-    game_id = "test_game_0"
-    api_mod._games[game_id] = initial_state(target_id)
-    api_mod._autocomplete_pools[game_id] = corpus
-    api_mod._target_track_meta[game_id] = corpus.get_track(target_id)
-    return game_id
+def _seed_game(target: Track | None = None) -> str:
+    """Prime ``_games`` with a fresh session; return the game_id."""
+    if target is None:
+        target = _track()
+    gid = "test_game_0"
+    api_mod._games[gid] = GameSession(
+        state=initial_state(target.spotify_id),
+        target=target,
+        correct_pool={target.spotify_id: target},
+    )
+    return gid
 
 
-def test_game_page_renders_for_existing_game(client: TestClient, fake_corpus: Corpus) -> None:
-    """Rationale: smoke-test for the full game template.
-
-    A 500 here often means a missing context variable in the template — the
-    sort of regression ty / ruff cannot catch since Jinja contexts are dynamic.
-    """
-    game_id = _seed_game(fake_corpus)
+def test_game_page_renders(client: TestClient) -> None:
+    """Rationale: smoke-test for the full game template with a seeded session."""
+    game_id = _seed_game()
     response = client.get(f"/game/{game_id}")
     assert response.status_code == 200
     assert 'data-game-id="' in response.text
-    assert "Play" in response.text
 
 
 def test_game_page_404_for_unknown_id(client: TestClient) -> None:
-    """Rationale: opaque id lookup must 404 rather than leaking a 500."""
     response = client.get("/game/does_not_exist")
     assert response.status_code == 404
 
 
-def test_guess_correct_transitions_to_finished(client: TestClient, fake_corpus: Corpus) -> None:
-    """Rationale: a correct guess at round 0 should finish the game and the
-    returned partial should render the winning result section."""
-    game_id = _seed_game(fake_corpus, target_id="id_1")
-    response = client.post(f"/game/{game_id}/guess", data={"guess_spotify_id": "id_1"})
+def test_guess_correct_transitions_to_finished(client: TestClient) -> None:
+    """Rationale: correct guess at round 0 ends the game as a win."""
+    target = _track(spotify_id="target_id")
+    game_id = _seed_game(target)
+    response = client.post(f"/game/{game_id}/guess", data={"guess_track_id": "target_id"})
     assert response.status_code == 200
-    assert "You got it" in response.text
-    assert api_mod._games[game_id].finished is True
-    assert api_mod._games[game_id].won is True
+    assert api_mod._games[game_id].state.finished is True
+    assert api_mod._games[game_id].state.won is True
 
 
-def test_guess_wrong_advances_round(client: TestClient, fake_corpus: Corpus) -> None:
-    """Rationale: a wrong guess increments round_index by exactly one."""
-    game_id = _seed_game(fake_corpus, target_id="id_1")
-    response = client.post(f"/game/{game_id}/guess", data={"guess_spotify_id": "id_2"})
+def test_guess_wrong_advances_round(client: TestClient) -> None:
+    game_id = _seed_game(_track(spotify_id="target_id"))
+    response = client.post(f"/game/{game_id}/guess", data={"guess_track_id": "some_other_id"})
     assert response.status_code == 200
-    assert api_mod._games[game_id].round_index == 1
-    assert api_mod._games[game_id].finished is False
+    assert api_mod._games[game_id].state.round_index == 1
+    assert api_mod._games[game_id].state.finished is False
 
 
-def test_skip_advances_round(client: TestClient, fake_corpus: Corpus) -> None:
-    """Rationale: skip transitions the state identically to a wrong guess,
-    with a ``None`` entry in ``guesses``."""
-    game_id = _seed_game(fake_corpus, target_id="id_1")
+def test_skip_advances_round(client: TestClient) -> None:
+    game_id = _seed_game()
     response = client.post(f"/game/{game_id}/skip")
     assert response.status_code == 200
-    state = api_mod._games[game_id]
-    assert state.round_index == 1
-    assert state.guesses == (None,)
+    assert api_mod._games[game_id].state.round_index == 1
+    assert api_mod._games[game_id].state.guesses == (None,)
 
 
-def test_guess_on_finished_game_returns_409(client: TestClient, fake_corpus: Corpus) -> None:
-    """Rationale: game engine raises ``ValueError`` which routes map to 409."""
-    game_id = _seed_game(fake_corpus, target_id="id_1")
-    # Finish the game first.
-    client.post(f"/game/{game_id}/guess", data={"guess_spotify_id": "id_1"})
-    # Second guess must reject.
-    response = client.post(f"/game/{game_id}/guess", data={"guess_spotify_id": "id_2"})
+def test_guess_on_finished_game_returns_409(client: TestClient) -> None:
+    target = _track(spotify_id="target_id")
+    game_id = _seed_game(target)
+    client.post(f"/game/{game_id}/guess", data={"guess_track_id": "target_id"})
+    response = client.post(f"/game/{game_id}/guess", data={"guess_track_id": "other"})
     assert response.status_code == 409
 
 
-def test_autocomplete_with_game_id_uses_union_pool(client: TestClient, fake_corpus: Corpus) -> None:
-    """Rationale: during a game the autocomplete pool must include the
-    correct-answer pool even if it's obscure. We seed a game with a pool that
-    contains a track absent from the base corpus and verify it appears."""
-    from heardle.spotify import Track
+def test_preview_returns_url(client: TestClient) -> None:
+    """Rationale: the Play button fetches preview_url via this endpoint.
 
-    obscure = Track(
-        spotify_id="obscure_id",
-        title="Obscure Tune Only In Playlist",
-        primary_artist="Unknown",
-        album_name="Demo",
-        release_year=2023,
-        popularity=None,
-    )
-    game_id = _seed_game(fake_corpus, target_id="id_1")
-    api_mod._autocomplete_pools[game_id] = fake_corpus.union_with([obscure])
-
-    response = client.get("/autocomplete", params={"q": "obscure", "game_id": game_id})
+    Keeps the URL out of the rendered HTML; reading it still requires an
+    explicit request which a casual cheater would miss.
+    """
+    target = _track(preview_url="https://example.com/foo.m4a")
+    game_id = _seed_game(target)
+    response = client.get(f"/game/{game_id}/preview")
     assert response.status_code == 200
-    ids = [r["id"] for r in response.json()]
-    assert "obscure_id" in ids
+    assert response.json() == {"preview_url": "https://example.com/foo.m4a"}
+
+
+def test_preview_404_for_unknown_game(client: TestClient) -> None:
+    response = client.get("/game/does_not_exist/preview")
+    assert response.status_code == 404

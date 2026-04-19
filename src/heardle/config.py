@@ -1,71 +1,71 @@
 """Environment-driven configuration.
 
-Values are sourced from the process environment, populated at module import time
-from the repository-root ``.env`` by ``python-dotenv``. Missing variables raise
-``KeyError`` at settings load, so configuration errors surface immediately at
-server start rather than silently mid-request.
+Values are sourced from the process environment, populated at module import
+time from the repository-root ``.env`` by ``python-dotenv``. All values have
+sensible defaults so a bare clone with no ``.env`` boots cleanly in the
+default iTunes-backed mode — the "clone and play" experience.
 
-``load_settings`` is deliberately uncached — tests may patch ``os.environ`` and
-expect to see the change. The FastAPI wiring caches a single instance at app
-startup via a module-level global in :mod:`heardle.api`.
+For production use (real sessions, Spotify-backed mode) the user overrides
+specific values in ``.env``. See ``.env.example`` for the full catalogue.
 """
 
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-# Side effect intentional: load .env exactly once, on first import of any heardle
-# module that touches config. ``load_dotenv`` does not override variables already
-# set in the environment, so CI / Docker / systemd-provided env wins, which is
-# the behaviour we want in deployment.
+# Side effect intentional: load .env exactly once, on first import of any
+# heardle module that touches config. ``load_dotenv`` does not override
+# variables already set in the environment, so CI / Docker / systemd-
+# provided env wins — the behaviour we want for deployment.
 load_dotenv()
 
 
 @dataclass(frozen=True)
 class Settings:
-    """Typed snapshot of the process environment at load time.
+    """Typed snapshot of the process environment at load time."""
 
-    Immutable so downstream modules can rely on settings not drifting mid-run.
-    """
+    audio_backend: str
+    """``"itunes"`` (default, zero auth) or ``"spotify"`` (future, requires OAuth)."""
 
     spotify_client_id: str
     spotify_client_secret: str
     spotify_redirect_uri: str
+
     session_secret: str
     game_state_secret: str
+
     popular_corpus_path: str
     popularity_threshold: int | None
     year_threshold: int | None
 
+    itunes_country: str
+    """Two-letter ISO country used for iTunes storefront queries."""
+
 
 def load_settings() -> Settings:
-    """Load configuration from the process environment.
+    """Load configuration from the environment with sensible defaults throughout.
 
-    Raises
-    ------
-    KeyError
-        If any required variable is missing. Required: ``SPOTIFY_CLIENT_ID``,
-        ``SPOTIFY_CLIENT_SECRET``, ``SPOTIFY_REDIRECT_URI``, ``SESSION_SECRET``,
-        ``GAME_STATE_SECRET``. Optional with defaults: ``POPULAR_CORPUS_PATH``
-        (``data/popular_corpus.parquet``), ``POPULARITY_THRESHOLD`` (``25``),
-        ``YEAR_THRESHOLD`` (``2000``). Either threshold may be set to the
-        empty string to disable that filter.
-    ValueError
-        If ``POPULARITY_THRESHOLD`` or ``YEAR_THRESHOLD`` is set but not an
-        integer.
+    No variable is strictly required — the only one with any security
+    implication (``SESSION_SECRET``) falls back to an ephemeral random token
+    so the server can boot for local-only use. Override in production.
     """
     return Settings(
-        spotify_client_id=os.environ["SPOTIFY_CLIENT_ID"],
-        spotify_client_secret=os.environ["SPOTIFY_CLIENT_SECRET"],
-        spotify_redirect_uri=os.environ["SPOTIFY_REDIRECT_URI"],
-        session_secret=os.environ["SESSION_SECRET"],
-        game_state_secret=os.environ["GAME_STATE_SECRET"],
+        audio_backend=os.environ.get("AUDIO_BACKEND", "itunes").lower(),
+        spotify_client_id=os.environ.get("SPOTIFY_CLIENT_ID", ""),
+        spotify_client_secret=os.environ.get("SPOTIFY_CLIENT_SECRET", ""),
+        spotify_redirect_uri=os.environ.get(
+            "SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback"
+        ),
+        session_secret=os.environ.get("SESSION_SECRET") or secrets.token_urlsafe(32),
+        game_state_secret=os.environ.get("GAME_STATE_SECRET") or secrets.token_urlsafe(32),
         popular_corpus_path=os.environ.get("POPULAR_CORPUS_PATH", "data/popular_corpus.parquet"),
         popularity_threshold=_int_or_none(os.environ.get("POPULARITY_THRESHOLD", "25")),
         year_threshold=_int_or_none(os.environ.get("YEAR_THRESHOLD", "2000")),
+        itunes_country=os.environ.get("ITUNES_COUNTRY", "US"),
     )
 
 
