@@ -266,14 +266,26 @@ async def game_page(request: Request, game_id: str) -> HTMLResponse:
 async def game_guess(
     request: Request,
     game_id: str,
-    guess_track_id: Annotated[str, Form()],
+    guess_track_id: Annotated[str, Form()] = "",
 ) -> HTMLResponse:
-    """Apply a guess to the current song and return the updated body partial."""
+    """Apply a guess to the current song and return the updated body partial.
+
+    An empty ``guess_track_id`` is treated as a no-op: we re-render the current
+    state without advancing. This covers the case where the user hits Enter
+    before selecting an autocomplete suggestion — surfacing a 422 there would
+    swallow the htmx swap and leave the UI visibly frozen.
+    """
     session = _games.get(game_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Unknown game id.")
     if session.session_finished:
         raise HTTPException(status_code=409, detail="Session has ended.")
+    if not guess_track_id.strip():
+        return templates.TemplateResponse(
+            request,
+            "partials/game_body.html",
+            _game_context(game_id, session),
+        )
     try:
         new_state = apply_guess(session.state, guess_track_id)
     except ValueError as e:

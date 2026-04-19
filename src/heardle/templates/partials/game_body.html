@@ -198,6 +198,11 @@
                 <span id="volume-readout" class="volume-readout">25%</span>
             </div>
 
+            {# Guess form owns only the inputs. Submit lives in the action
+               bar below (linked via ``form="guess-form"``) so Skip and
+               Submit can share a row visually without nesting a form
+               inside another form. Skip is its own <form> so there's no
+               ambiguity about which hx-post handles the click. #}
             <form id="guess-form"
                   class="guess-form"
                   hx-post="/game/{{ game_id }}/guess"
@@ -213,32 +218,37 @@
                     <ul id="autocomplete-list" class="autocomplete-list" hidden></ul>
                 </div>
                 <input id="guess-track-id" name="guess_track_id" type="hidden">
-                <div class="action-bar">
-                    <button type="button"
-                            class="skip-button"
-                            hx-post="/game/{{ game_id }}/skip"
-                            hx-target="#game-body"
-                            hx-swap="outerHTML">
+            </form>
+
+            <div class="action-bar">
+                <form class="skip-form"
+                      hx-post="/game/{{ game_id }}/skip"
+                      hx-target="#game-body"
+                      hx-swap="outerHTML">
+                    <button type="submit" class="skip-button">
                         {% if next_skip_increment %}
                             Skip (+{{ next_skip_increment }} s)
                         {% else %}
                             Skip
                         {% endif %}
                     </button>
-                    <button type="submit" id="submit-guess" class="submit-button" disabled>
-                        Submit
-                    </button>
-                </div>
-            </form>
+                </form>
+                <button type="submit"
+                        form="guess-form"
+                        id="submit-guess"
+                        class="submit-button"
+                        disabled>
+                    Submit
+                </button>
+            </div>
 
             <div class="end-session-footer">
-                <button type="button"
-                        class="end-session-link"
-                        hx-post="/game/{{ game_id }}/end"
-                        hx-target="#game-body"
-                        hx-swap="outerHTML">
-                    End session
-                </button>
+                <form class="end-form"
+                      hx-post="/game/{{ game_id }}/end"
+                      hx-target="#game-body"
+                      hx-swap="outerHTML">
+                    <button type="submit" class="end-session-link">End session</button>
+                </form>
             </div>
         {% endif %}
 

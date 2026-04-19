@@ -95,6 +95,15 @@
             // suggestion can still register.
             setTimeout(clearSuggestions, 150);
         });
+
+        // Pressing Enter in the text input otherwise submits the guess
+        // form. Block it when no suggestion has been selected so the
+        // server does not have to field empty-guess requests.
+        input.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter" && !hiddenId.value) {
+                ev.preventDefault();
+            }
+        });
     }
 
     function escapeHtml(text) {

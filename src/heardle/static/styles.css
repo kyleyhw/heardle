@@ -346,12 +346,22 @@ code { background: var(--surface-raised); padding: 0.1rem 0.4rem; border-radius:
 .autocomplete-list .title { font-weight: 500; }
 .autocomplete-list .meta  { color: var(--muted); font-size: 0.85rem; }
 
-/* Skip + submit row, matching original Heardle's bottom bar */
+/* Skip + submit row, matching original Heardle's bottom bar.
+
+   The ``display: contents`` on the inner form wrappers means the forms do
+   not introduce layout boxes; their children (buttons) participate in the
+   action-bar flexbox directly. Using separate <form>s avoids an htmx
+   gotcha where a button with hx-post nested inside another form could
+   race with the enclosing form's submit handler. */
 .action-bar {
     display: flex;
     justify-content: space-between;
     gap: 0.75rem;
     margin-top: 0.25rem;
+}
+.skip-form,
+.end-form {
+    display: contents;
 }
 .skip-button,
 .submit-button {
