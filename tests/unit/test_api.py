@@ -9,25 +9,19 @@ handling, and game-state transitions exposed through the routes.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Generator
 
-# Session secret must exist before the api module is imported (SessionMiddleware
-# reads it at app-construction time); the env-setup therefore appears between
-# the stdlib imports and the ``heardle`` / third-party imports, which ruff
-# flags as E402. The ordering is intentional — suppress the warning rather
-# than re-architect the import graph. pragma: allowlist secret
-os.environ.setdefault("SESSION_SECRET", "test_session_secret_not_used_in_prod")
+import pandas as pd
+import pytest
+from fastapi.testclient import TestClient
 
-import pandas as pd  # noqa: E402
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-from heardle import api as api_mod  # noqa: E402
-from heardle.auth import TokenBundle  # noqa: E402
-from heardle.config import Settings  # noqa: E402
-from heardle.corpus import Corpus  # noqa: E402
-from heardle.game import initial_state  # noqa: E402
+# ``SESSION_SECRET`` is seeded in ``tests/conftest.py`` so the ``heardle.api``
+# import below succeeds without a populated ``.env``.
+from heardle import api as api_mod
+from heardle.auth import TokenBundle
+from heardle.config import Settings
+from heardle.corpus import Corpus
+from heardle.game import initial_state
 
 
 @pytest.fixture

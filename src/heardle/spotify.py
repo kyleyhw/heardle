@@ -30,11 +30,19 @@ DEFAULT_PAGINATION_CAP: int = 2_000
 
 @dataclass(frozen=True)
 class Track:
-    """Minimal track representation used downstream by the game and corpus modules.
+    """Provider-agnostic track representation used by the game and corpus modules.
 
-    ``popularity`` is ``None`` when the Spotify app is in Development Mode under
-    the February-2026 API revision, which dropped the field from that tier.
-    Extended Quota Mode apps continue to receive an integer 0-100.
+    The field name ``spotify_id`` is historical — in iTunes-backed mode it
+    holds Apple's ``trackId`` as a string (e.g. ``"1440833179"``). The game
+    logic only cares about string equality, not provider semantics. The
+    optional :attr:`preview_url` is populated by backends that expose a
+    ready-to-play audio URL (currently iTunes); Spotify-backed tracks leave
+    it ``None`` because playback goes through the Web Playback SDK instead.
+
+    ``popularity`` is ``None`` when the Spotify app is in Development Mode
+    under the February-2026 API revision, which dropped the field from that
+    tier; iTunes-backed tracks also leave it ``None`` since Apple does not
+    expose an equivalent.
     """
 
     spotify_id: str
@@ -43,6 +51,7 @@ class Track:
     album_name: str
     release_year: int
     popularity: int | None
+    preview_url: str | None = None
 
 
 class SpotifyAPIError(RuntimeError):
