@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import httpx
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -166,6 +166,29 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+
+def _static_version(path: str) -> str:
+    """Return an mtime-based cache-buster for the given static asset.
+
+    Browsers sometimes keep a stale cached copy of ``player.js`` /
+    ``autocomplete.js`` / ``styles.css`` across a server upgrade,
+    producing a UI that renders correctly but misbehaves interactively.
+    Appending the file's modification time as a query parameter forces
+    the browser to treat each release as a new URL, sidestepping the
+    cache entirely. The cost is one extra ``stat`` per template render,
+    which is negligible compared to the typical request's network cost.
+    """
+    file_path = _STATIC_DIR / path
+    if not file_path.exists():
+        return "0"
+    return str(int(file_path.stat().st_mtime))
+
+
+# Expose to all templates as ``static_version("file.js")``. ty's Jinja stubs
+# narrow Environment.globals to {range, dict, numeric helpers}; a plain
+# callable is fine at runtime, so we widen through ``cast(Any, ...)``.
+cast(Any, templates.env.globals)["static_version"] = _static_version
 
 
 # ---------------------------------------------------------------------------
