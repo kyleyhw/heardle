@@ -1,6 +1,6 @@
 # Architecture
 
-## Component overview (iTunes default)
+## Component overview (Deezer default)
 
 ```
 Browser (Jinja + htmx + HTML5 <audio>)
@@ -10,6 +10,11 @@ Browser (Jinja + htmx + HTML5 <audio>)
 FastAPI backend
         │
         │  httpx.AsyncClient
+        ▼
+Deezer Public API  (https://api.deezer.com)
+        │  ── default backend, MP3 previews from cdnt-preview.dzcdn.net
+        │
+        │  alternative backend (AUDIO_BACKEND=itunes):
         ▼
 iTunes Search / Lookup  (https://itunes.apple.com)
 ```
@@ -25,12 +30,13 @@ external datastore.
 | Module | Responsibility | External calls |
 |---|---|---|
 | `config.py` | Typed env configuration via a frozen dataclass, all fields default to sensible values | reads `.env` |
-| `itunes.py` | Async wrapper for artist / year / search / single-track lookups; parser drops non-song rows and rows without a preview URL | iTunes Search API |
-| `spotify.py` | Async wrapper for the (currently-unwired) Spotify backend. Unit-tested, ready for re-enablement; `api.py` does not import it in iTunes mode | Spotify Web API |
+| `deezer.py` | Async wrapper for Deezer's `/search`, `/search/artist`, `/artist/{id}/top`, `/track/{id}`. Drops empty-preview rows. Year-source path bulk-hydrates `/track/{id}` to recover `release_date` | Deezer Public API |
+| `itunes.py` | Async wrapper for iTunes Search / Lookup; same shape as `deezer.py`. Selectable via `AUDIO_BACKEND=itunes` | iTunes Search API |
+| `spotify.py` | Async wrapper for the (currently-unwired) Spotify backend. Unit-tested, ready for re-enablement; `api.py` does not import it in zero-auth modes | Spotify Web API |
 | `auth.py` | OAuth Authorization Code flow and state signing for the future Spotify toggle | Spotify OAuth |
 | `corpus.py` | Optional pandas-backed offline autocomplete index. Built from a Kaggle snapshot; currently unused by `api.py` | — |
 | `game.py` | Pure game logic: `d_i` schedule, scoring, immutable state transitions | — |
-| `api.py` | FastAPI routes + htmx partials; orchestrates `itunes` + `game` | — |
+| `api.py` | FastAPI routes + htmx partials; dispatches on `AUDIO_BACKEND` to either `deezer` or `itunes` and orchestrates `game` | — |
 
 The game logic in `game.py` is pure — no IO, no framework imports. This
 makes it directly unit-testable without mocks and keeps the `d_i` schedule
@@ -40,8 +46,8 @@ makes it directly unit-testable without mocks and keeps the `d_i` schedule
 
 1. `GET /` — source-selector form (artist / year / search term).
 2. `POST /game/new` with `{source_type, source_value}` — server queries
-   iTunes, builds `𝒞`, samples the target uniformly, stores a
-   `GameSession`, and 303-redirects to `/game/{id}`.
+   the active backend (Deezer by default), builds `𝒞`, samples the target
+   uniformly, stores a `GameSession`, and 303-redirects to `/game/{id}`.
 3. `GET /game/{id}` — renders the full game page. The target's
    `preview_url` is deliberately **not** in the HTML.
 4. User clicks Play → `GET /game/{id}/preview` returns the preview URL;
@@ -52,9 +58,9 @@ makes it directly unit-testable without mocks and keeps the `d_i` schedule
    `heardle.game`, htmx swaps the updated body partial back into the page.
 6. During the guess step the user types into an autocomplete input;
    keystrokes fire `GET /autocomplete?q=...&game_id=...` (debounced to
-   300 ms). The server merges iTunes' global ranked results with substring
-   matches from the game's `correct_pool`, guaranteeing the target is
-   always findable by at least one substring of its title.
+   300 ms). The server merges the active backend's global ranked results
+   with substring matches from the game's `correct_pool`, guaranteeing the
+   target is always findable by at least one substring of its title.
 
 ## Why FastAPI + htmx (not an SPA)
 
@@ -70,7 +76,11 @@ makes it directly unit-testable without mocks and keeps the `d_i` schedule
 
 `AUDIO_BACKEND` env var selects the audio source:
 
-- `itunes` (default) — fully wired, described above.
+- `deezer` (default) — fully wired. Larger global catalogue, more generous
+  rate limit. Described above.
+- `itunes` — fully wired alternative. US-biased catalogue, M4A previews.
+  Both zero-auth backends share the same correct-pool / autocomplete
+  contract, so swapping is a one-env-var change.
 - `spotify` — architecturally plumbed, currently returns 503 on
   `/game/new`. The Spotify wrapper (`spotify.py`), OAuth plumbing
   (`auth.py`), templates, and SDK-driven player are preserved in the tree

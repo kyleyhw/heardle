@@ -59,9 +59,10 @@
             }
             for (const s of suggestions) {
                 const item = document.createElement("li");
+                const yearSuffix = s.year ? ` · ${s.year}` : "";
                 item.innerHTML =
                     `<span class="title">${escapeHtml(s.title)}</span>` +
-                    ` <span class="meta">${escapeHtml(s.artist)} · ${s.year}</span>`;
+                    ` <span class="meta">${escapeHtml(s.artist)}${yearSuffix}</span>`;
                 item.addEventListener("mousedown", (ev) => {
                     // mousedown rather than click so the blur from input doesn't
                     // hide the list before the click fires.

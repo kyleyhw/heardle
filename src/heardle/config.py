@@ -29,7 +29,13 @@ class Settings:
     """Typed snapshot of the process environment at load time."""
 
     audio_backend: str
-    """``"itunes"`` (default, zero auth) or ``"spotify"`` (future, requires OAuth)."""
+    """One of:
+
+    - ``"deezer"`` — default. Zero-auth, larger global catalogue, generous
+      rate limit. Preview window is selected by Deezer (often the chorus).
+    - ``"itunes"`` — zero-auth fallback. Smaller catalogue, US-biased.
+    - ``"spotify"`` — reserved for a future re-enablement; currently raises 503.
+    """
 
     spotify_client_id: str
     spotify_client_secret: str
@@ -54,7 +60,7 @@ def load_settings() -> Settings:
     so the server can boot for local-only use. Override in production.
     """
     return Settings(
-        audio_backend=os.environ.get("AUDIO_BACKEND", "itunes").lower(),
+        audio_backend=os.environ.get("AUDIO_BACKEND", "deezer").lower(),
         spotify_client_id=os.environ.get("SPOTIFY_CLIENT_ID", ""),
         spotify_client_secret=os.environ.get("SPOTIFY_CLIENT_SECRET", ""),
         spotify_redirect_uri=os.environ.get(

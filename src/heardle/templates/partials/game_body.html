@@ -153,7 +153,7 @@
                 {% if target %}
                     <p class="result-track">
                         <strong>{{ target.title }}</strong>
-                        <span class="result-artist">{{ target.primary_artist }} · {{ target.release_year }}</span>
+                        <span class="result-artist">{{ target.primary_artist }}{% if target.release_year %} · {{ target.release_year }}{% endif %}</span>
                     </p>
                 {% endif %}
                 <div class="transition-buttons">

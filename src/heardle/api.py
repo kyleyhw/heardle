@@ -1,9 +1,9 @@
-"""FastAPI routes — iTunes-backed by default, with a toggle to Spotify (future).
+"""FastAPI routes — Deezer-backed by default, with toggles to iTunes / Spotify.
 
 Architecture
 ------------
 - Session state is a signed cookie managed by Starlette's ``SessionMiddleware``;
-  in iTunes mode it holds only ``active_game_id``.
+  in zero-auth modes it holds only ``active_game_id``.
 - A *session* spans multiple songs drawn without replacement from the chosen
   source pool. Each *song* is one Heardle puzzle with the canonical
   1-2-4-7-11-16 s clip-reveal schedule. Session ends when the user clicks
@@ -16,8 +16,15 @@ Architecture
 
 Audio-backend toggle
 --------------------
-``AUDIO_BACKEND`` env var selects the backend. Default is ``itunes``.
-``spotify`` is reserved for a future re-enablement — currently raises 503.
+``AUDIO_BACKEND`` env var selects the backend:
+
+- ``deezer`` (default) — zero-auth, larger global catalogue.
+- ``itunes`` — zero-auth, US-biased.
+- ``spotify`` — reserved for a future re-enablement; currently raises 503.
+
+Both zero-auth backends share the same correct-pool / autocomplete contract,
+so the only divergence in this module is the dispatch in
+``_build_correct_pool`` and ``autocomplete``.
 """
 
 from __future__ import annotations
@@ -39,6 +46,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from heardle import deezer as deezer_mod
 from heardle import itunes as itunes_mod
 from heardle.config import Settings, load_settings
 from heardle.game import (
@@ -138,10 +146,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Log the chosen backend on startup; clear game state on shutdown."""
     settings = get_settings()
     logger.info("Heardle starting up: audio_backend=%s", settings.audio_backend)
-    if settings.audio_backend == "spotify":
+    if settings.audio_backend not in {"deezer", "itunes"}:
         logger.warning(
-            "AUDIO_BACKEND=spotify is reserved for a future toggle. "
-            "All game-creation routes will return 503 until this is wired up."
+            "AUDIO_BACKEND=%s is not currently wired up. "
+            "All game-creation routes will return 503 until this changes.",
+            settings.audio_backend,
         )
     yield
     _games.clear()
@@ -190,6 +199,17 @@ def _static_version(path: str) -> str:
 # callable is fine at runtime, so we widen through ``cast(Any, ...)``.
 cast(Any, templates.env.globals)["static_version"] = _static_version
 
+# Render the active backend's display name in the navbar of every page.
+# Resolved once at startup since AUDIO_BACKEND is process-static.
+_BACKEND_LABELS: dict[str, str] = {
+    "deezer": "Deezer",
+    "itunes": "iTunes",
+    "spotify": "Spotify",
+}
+cast(Any, templates.env.globals)["backend_label"] = _BACKEND_LABELS.get(
+    load_settings().audio_backend, load_settings().audio_backend.title()
+)
+
 
 # ---------------------------------------------------------------------------
 # Index
@@ -230,16 +250,18 @@ async def game_new(
     source_value: Annotated[str, Form()],
 ) -> RedirectResponse:
     """Start a new multi-song session and redirect to the first song's page."""
-    if settings.audio_backend != "itunes":
+    if settings.audio_backend not in {"deezer", "itunes"}:
         raise HTTPException(
             status_code=503,
             detail=(
                 f"audio_backend={settings.audio_backend!r} is not currently "
-                "wired up. Set AUDIO_BACKEND=itunes or unset the env var."
+                "wired up. Set AUDIO_BACKEND=deezer (default) or "
+                "AUDIO_BACKEND=itunes."
             ),
         )
 
-    pool = await _build_correct_pool_itunes(
+    pool = await _build_correct_pool(
+        backend=settings.audio_backend,
         source_type=source_type,
         source_value=source_value,
         country=settings.itunes_country,
@@ -429,13 +451,16 @@ async def autocomplete(
     query = q.strip()
     if not query:
         return JSONResponse([])
-    if settings.audio_backend != "itunes":
+    if settings.audio_backend not in {"deezer", "itunes"}:
         return JSONResponse([])
 
     async with httpx.AsyncClient() as client:
-        live = await itunes_mod.search_tracks(
-            query, limit=10, country=settings.itunes_country, http_client=client
-        )
+        if settings.audio_backend == "deezer":
+            live = await deezer_mod.search_tracks(query, limit=10, http_client=client)
+        else:
+            live = await itunes_mod.search_tracks(
+                query, limit=10, country=settings.itunes_country, http_client=client
+            )
 
     pool_matches: list[Track] = []
     if game_id and game_id in _games:
@@ -464,29 +489,54 @@ async def autocomplete(
 # ---------------------------------------------------------------------------
 
 
-async def _build_correct_pool_itunes(
+async def _build_correct_pool(
     *,
+    backend: str,
     source_type: str,
     source_value: str,
     country: str,
 ) -> list[Track]:
-    """Resolve the source selection into a list of candidate targets (iTunes mode)."""
+    """Resolve the source selection into a list of candidate targets.
+
+    Dispatches on ``backend`` (``"deezer"`` or ``"itunes"``). Both backends
+    return a list of :class:`Track` with ``preview_url`` populated; tracks
+    without a playable preview are dropped at the wrapper level (see
+    ``deezer._try_parse_track`` / ``itunes._try_parse_track``), guaranteeing
+    that the uniform sample $t \\sim \\mathrm{Uniform}(\\mathcal{C})$ never
+    selects an unwinnable target.
+    """
     async with httpx.AsyncClient() as client:
-        if source_type == "artist":
-            return await itunes_mod.search_tracks_by_artist(
-                source_value, country=country, http_client=client
-            )
-        if source_type == "year":
-            try:
-                year = int(source_value)
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail="Year must be an integer.") from e
-            return await itunes_mod.search_tracks_by_year(year, country=country, http_client=client)
-        if source_type == "search":
-            return await itunes_mod.search_tracks(
-                source_value, limit=50, country=country, http_client=client
-            )
+        if backend == "deezer":
+            if source_type == "artist":
+                return await deezer_mod.search_tracks_by_artist(source_value, http_client=client)
+            if source_type == "year":
+                year = _parse_year(source_value)
+                return await deezer_mod.search_tracks_by_year(year, http_client=client)
+            if source_type == "search":
+                return await deezer_mod.search_tracks(source_value, limit=50, http_client=client)
+        elif backend == "itunes":
+            if source_type == "artist":
+                return await itunes_mod.search_tracks_by_artist(
+                    source_value, country=country, http_client=client
+                )
+            if source_type == "year":
+                year = _parse_year(source_value)
+                return await itunes_mod.search_tracks_by_year(
+                    year, country=country, http_client=client
+                )
+            if source_type == "search":
+                return await itunes_mod.search_tracks(
+                    source_value, limit=50, country=country, http_client=client
+                )
     raise HTTPException(status_code=400, detail=f"Unknown source_type: {source_type}")
+
+
+def _parse_year(raw: str) -> int:
+    """Coerce a user-supplied source_value into an integer year, or raise 400."""
+    try:
+        return int(raw)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Year must be an integer.") from e
 
 
 def _dedup_by_id(tracks: list[Track]) -> list[Track]:

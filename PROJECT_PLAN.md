@@ -47,3 +47,10 @@ This document outlines the planned phases and tasks for developing the Heardle c
 28. [completed] Templates updated: base.html dropped Spotify SDK; index.html new source selector; partials/game_body.html embeds `<audio>`; hidden input renamed to `guess_track_id`.
 29. [completed] `static/player.js` rewritten as an HTML5 `<audio>` player. Clip cutoff anchored on `audio.play()` promise resolution (±20 ms accuracy).
 30. [completed] `docs/` rewritten: SETUP.md shrunk to ~30 lines, docs/audio_pipeline.md rewritten for iTunes, docs/deployment.md simplified (no per-user auth), docs/architecture.md updated.
+
+## Phase 8: Deezer pivot (default backend swap)
+31. [completed] `src/heardle/deezer.py` — async wrapper over the Deezer Public API (`/search`, `/search/artist`, `/artist/{id}/top`, `/track/{id}`). Drops empty-preview rows at parse time. Year-source path bulk-hydrates `/track/{id}` (concurrent, semaphore-bounded) to recover `release_date`, since Deezer's bulk envelopes omit it. 24 respx-mocked unit tests.
+32. [completed] `Track.release_year: int | None` — relaxed to optional, since Deezer's `/search` and `/artist/{id}/top` envelopes do not include `release_date`. Templates and the autocomplete client gracefully omit the year when `None`.
+33. [completed] `config.py` — `AUDIO_BACKEND` default flipped from `"itunes"` to `"deezer"`. Both backends share the same correct-pool / autocomplete contract; `api.py` now dispatches via a single `_build_correct_pool(backend, …)` helper.
+34. [completed] `templates/index.html` copy updated to refer to Deezer; `partials/game_body.html` and `static/autocomplete.js` made year-optional.
+35. [completed] Docs rewritten: README, SETUP.md, docs/architecture.md, docs/audio_pipeline.md (with backend-comparison table and endpoint mapping). All 144 unit tests pass; ruff and ty clean.

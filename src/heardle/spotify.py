@@ -32,24 +32,29 @@ DEFAULT_PAGINATION_CAP: int = 2_000
 class Track:
     """Provider-agnostic track representation used by the game and corpus modules.
 
-    The field name ``spotify_id`` is historical — in iTunes-backed mode it
-    holds Apple's ``trackId`` as a string (e.g. ``"1440833179"``). The game
-    logic only cares about string equality, not provider semantics. The
-    optional :attr:`preview_url` is populated by backends that expose a
-    ready-to-play audio URL (currently iTunes); Spotify-backed tracks leave
-    it ``None`` because playback goes through the Web Playback SDK instead.
+    The field name ``spotify_id`` is historical — in iTunes- or Deezer-backed
+    mode it holds the provider's track id as a string. The game logic only
+    cares about string equality, not provider semantics. The optional
+    :attr:`preview_url` is populated by backends that expose a ready-to-play
+    audio URL (iTunes, Deezer); Spotify-backed tracks leave it ``None``
+    because playback goes through the Web Playback SDK instead.
 
     ``popularity`` is ``None`` when the Spotify app is in Development Mode
     under the February-2026 API revision, which dropped the field from that
-    tier; iTunes-backed tracks also leave it ``None`` since Apple does not
-    expose an equivalent.
+    tier; iTunes- and Deezer-backed tracks also leave it ``None`` since
+    neither provider exposes an equivalent.
+
+    ``release_year`` is ``None`` when the backend's bulk endpoints do not
+    include release-date metadata (Deezer's ``/search`` and ``/artist/{id}/top``
+    only return album.id, not release_date). Year-based searches and
+    single-track lookups always populate it.
     """
 
     spotify_id: str
     title: str
     primary_artist: str
     album_name: str
-    release_year: int
+    release_year: int | None
     popularity: int | None
     preview_url: str | None = None
 

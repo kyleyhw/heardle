@@ -72,6 +72,10 @@ async def test_fetch_todays_top_hits_playlist(access_token: str) -> None:
         assert t.spotify_id
         assert t.title
         assert t.primary_artist
+        # Spotify always populates release_date for playlist tracks; the field
+        # is Optional in the Track dataclass only because Deezer's bulk
+        # endpoints omit it.
+        assert t.release_year is not None
         assert 1900 <= t.release_year <= 2100
 
 
