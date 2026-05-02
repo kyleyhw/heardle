@@ -1,6 +1,6 @@
 # Setup
 
-The default iTunes-backed mode needs **nothing** beyond a Python 3.12+
+The default Deezer-backed mode needs **nothing** beyond a Python 3.12+
 toolchain. Clone, sync, run.
 
 ```bash
@@ -38,13 +38,25 @@ uv run python -c "import secrets; print(secrets.token_urlsafe(64))"
 # paste the output into SESSION_SECRET= in .env
 ```
 
+### Switch to the iTunes backend
+
+Deezer's preview window is selected by their backend (often the chorus).
+iTunes is similar but draws from a US-biased catalogue and may pick a
+different window for the same track. To compare:
+
+```bash
+echo "AUDIO_BACKEND=itunes" >> .env
+```
+
+Both backends are zero-auth and share the same UI contract.
+
 ### Offline autocomplete corpus (future enhancement)
 
-The current autocomplete hits iTunes live on each keystroke (debounced
-client-side to 300 ms). If you want a pre-indexed offline corpus instead,
-see [docs/corpus_threshold.md](docs/corpus_threshold.md) — the Kaggle
-pipeline from Phase 4 is kept in the tree and can be wired back in with
-one config flag when desired.
+The current autocomplete hits the active backend live on each keystroke
+(debounced client-side to 300 ms). If you want a pre-indexed offline corpus
+instead, see [docs/corpus_threshold.md](docs/corpus_threshold.md) — the
+Kaggle pipeline from Phase 4 is kept in the tree and can be wired back in
+with one config flag when desired.
 
 ### Spotify backend (future toggle)
 
@@ -61,9 +73,9 @@ OAuth plumbing that's already in place for when the backend returns.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Server starts, `/` 200s, but `/game/new` 400s "zero playable tracks" | iTunes returned no preview-URL-bearing rows for that artist / year | Try a less obscure artist; many genuinely obscure tracks have no Apple preview |
-| Autocomplete doesn't surface the target | iTunes' global relevance doesn't rank a deep cut in the top 10 | The server falls back to substring match against the game's correct pool, so the target should still appear when you type part of the title — try a different substring |
-| Clip sounds like the chorus, not the intro | Apple picks the 30s window; not always the intro | Expected. See [docs/audio_pipeline.md](docs/audio_pipeline.md) for the tradeoff |
+| Server starts, `/` 200s, but `/game/new` 400s "zero playable tracks" | The backend returned no preview-bearing rows for that artist / year | Try a less obscure artist; many genuinely obscure tracks lack a playable preview on either backend |
+| Autocomplete doesn't surface the target | The backend's global relevance doesn't rank a deep cut in the top 10 | The server falls back to substring match against the game's correct pool, so the target should still appear when you type part of the title — try a different substring |
+| Clip sounds like the chorus, not the intro | Deezer (and iTunes) pick the 30 s window; not always the intro | Expected. See [docs/audio_pipeline.md](docs/audio_pipeline.md) for the tradeoff |
 | Audio hangs after one round | htmx swap left stale audio | Reload the page; this shouldn't happen after Phase 7c's beforeSwap pause — if it does, file an issue |
 
 ## Next steps

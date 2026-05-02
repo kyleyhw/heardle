@@ -43,3 +43,10 @@ docs/_build/
 
 # Playwright diagnostic output (screenshots + logs)
 diagnose/
+
+# Playwright MCP scratch directory (per-run page/console/network dumps)
+.playwright-mcp/
+
+# Loose screenshot artefacts at repo root from interactive Playwright sessions.
+# (Intentional documentation screenshots belong under docs/ or tests/reports/.)
+/*.png

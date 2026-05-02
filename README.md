@@ -2,7 +2,7 @@
 
 A self-hosted, single-player Heardle clone. Pick an **artist**, a **release year**, or any **search term**; a random track from the resulting pool becomes the target. Plays expanding audio clips (1 → 2 → 4 → 7 → 11 → 16 s) with a search-as-you-type guess box.
 
-Runs out of the box with zero configuration — audio is sourced from iTunes' free 30-second previews. A Spotify-backed alternative (full-track playback, intro-from-t=0 fidelity) is architecturally plumbed but currently disabled pending the February 2026 Web API rework.
+Runs out of the box with zero configuration — audio is sourced from Deezer's free 30-second previews (~120 M-track global catalogue, no auth, no API key). An iTunes backend is fully wired as an alternative (`AUDIO_BACKEND=itunes`); a Spotify backend (full-track playback, intro-from-t=0 fidelity) is architecturally plumbed but currently disabled pending the February 2026 Web API rework.
 
 ## Directory structure
 
@@ -10,14 +10,16 @@ Runs out of the box with zero configuration — audio is sourced from iTunes' fr
 heardle/
 ├── src/heardle/
 │   ├── __init__.py
-│   ├── auth.py              OAuth Authorization Code flow, token refresh, Premium check
-│   ├── spotify.py           Async wrapper over the Spotify Web API
+│   ├── deezer.py            Async wrapper over the Deezer Public API (default backend)
+│   ├── itunes.py            Async wrapper over the iTunes Search API (alternate backend)
+│   ├── spotify.py           Async wrapper over the Spotify Web API (deferred)
+│   ├── auth.py              OAuth Authorization Code flow, token refresh, Premium check (deferred)
 │   ├── corpus.py            Loads the popular-songs parquet, exposes autocomplete index
 │   ├── game.py              Pure game logic: d_i schedule, scoring, guess matching
-│   ├── config.py            Env-driven settings (pydantic-settings)
-│   ├── api.py               FastAPI routes + htmx partials
+│   ├── config.py            Env-driven settings (frozen dataclass + dotenv)
+│   ├── api.py               FastAPI routes + htmx partials, dispatches on AUDIO_BACKEND
 │   ├── templates/           Jinja templates (base, index, game, partials/*)
-│   └── static/              player.js (SDK + clip cutoff), styles.css
+│   └── static/              player.js (HTML5 audio + clip cutoff), styles.css
 ├── data/
 │   └── popular_corpus.parquet   Kaggle snapshot, popularity-filtered at load time
 ├── docs/
@@ -73,7 +75,7 @@ This guarantees that every element of $\mathcal{C}$ is typeable no matter how ob
 
 ### Autocomplete pool
 
-In the default iTunes mode the autocomplete hits iTunes Search on every (debounced) keystroke, returning iTunes' own relevance-ranked matches. The server additionally sweeps the active game's correct-answer pool for substring matches, guaranteeing that the target is always reachable from at least one substring of its title, even if iTunes' global ranking buries it.
+In the default Deezer mode the autocomplete hits Deezer's `/search` on every (debounced) keystroke, returning Deezer's own relevance-ranked matches. The server additionally sweeps the active game's correct-answer pool for substring matches, guaranteeing that the target is always reachable from at least one substring of its title, even if the backend's global ranking buries it. The iTunes-backed mode behaves identically against `iTunes Search`.
 
 An optional offline-corpus mode (pre-indexed Kaggle snapshot with rapidfuzz autocomplete) is preserved in the codebase from an earlier phase; it is currently off the critical path. See [docs/corpus_threshold.md](docs/corpus_threshold.md).
 
